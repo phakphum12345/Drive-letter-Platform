@@ -1,0 +1,42 @@
+name: Laravel Baseline
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: laravel-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  laravel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/research_os_laravel
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+          coverage: none
+      - name: Validate Composer configuration
+        run: composer validate --no-check-publish
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f composer.lock ]]; then
+            composer install --no-interaction --prefer-dist --no-progress
+          else
+            echo "::warning::composer.lock is absent; resolving compatible dependencies for this run."
+            composer update --no-interaction --prefer-dist --no-progress
+          fi
+      - name: Run Laravel tests
+        run: composer test

@@ -1,0 +1,34 @@
+name: Flutter Baseline
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ./.github/actions/flutter-setup
+        with:
+          channel: stable
+          flutter-version: "3.44.4"
+          cache: true
+      - name: Resolve dependencies
+        working-directory: apps/research_os_flutter
+        run: flutter pub get
+      - name: Analyze
+        working-directory: apps/research_os_flutter
+        run: flutter analyze
+      - name: Test
+        working-directory: apps/research_os_flutter
+        run: flutter test
