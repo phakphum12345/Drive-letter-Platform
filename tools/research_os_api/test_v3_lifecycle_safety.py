@@ -9,8 +9,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 CANDIDATE = ROOT / "v3" / "scripts" / "candidate_validate.ps1"
 SERVICE = ROOT / "v3" / "scripts" / "v3-service.ps1"
-CANDIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "v3-candidate.yml"
-CLEAN_CORE_WORKFLOW = ROOT / ".github" / "workflows" / "v3-clean-core.yml"
+CANDIDATE_WORKFLOW = ROOT / ".github" / "workflows-disabled-source" / "v3-candidate.yml"
+CLEAN_CORE_WORKFLOW = ROOT / ".github" / "workflows-disabled-source" / "v3-clean-core.yml"
 
 
 class V3LifecycleSafetyTests(unittest.TestCase):

@@ -11,10 +11,36 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
+import threading
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any
+
+_APPLY_LOCK = threading.Lock()
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    """Replace a file atomically using a temporary file in the same directory."""
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".research-os-tmp",
+        dir=str(path.parent),
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp_path.replace(path)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_LIST_ITEMS = 2000
@@ -27,6 +53,14 @@ TEXT_EXTENSIONS = {
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _normalize_newlines(content: str) -> str:
+    return content.replace("\r\n", "\n").replace("\r", "\n")
 
 def _projects(root: Path) -> dict[str, Path]:
     configured = (os.environ.get("RESEARCH_OS_CODE_PROJECTS") or "").strip()
@@ -109,12 +143,12 @@ def read_file(project_name: str, relative: str) -> dict[str, Any]:
     data = path.read_bytes()
     if len(data) > MAX_FILE_BYTES:
         raise ValueError("file is too large")
-    content = data.decode("utf-8")
+    content = _normalize_newlines(data.decode("utf-8"))
     return {
         "project": project_name,
         "path": path.relative_to(project).as_posix(),
         "content": content,
-        "sha256": _sha(content),
+        "sha256": _sha_bytes(data),
         "bytes": len(data),
     }
 
@@ -163,57 +197,132 @@ def validate(project_name: str) -> dict[str, Any]:
     test = _run([flutter, "test"], project, 600)
     return {"ok": test["exit_code"] == 0, "steps": [analyze, test]}
 
-def apply(project_name: str, relative: str, original_sha256: str, content: str, principal: str) -> dict[str, Any]:
-    # Both settings are supported identities, not mutually exclusive aliases.
-    # Selecting one with "or" silently ignored the email allowlist whenever an
-    # ID list was configured, potentially denying a legitimate Owner with 403.
-    configured_owners = (
-        os.environ.get("RESEARCH_OS_CODE_OWNER_IDS", ""),
-        os.environ.get("RESEARCH_OS_OWNER_EMAILS", ""),
-    )
-    allowed = {
-        item.strip().casefold()
-        for setting in configured_owners
-        for item in setting.split(",")
-        if item.strip()
-    }
-    if not allowed or principal.strip().lower() not in allowed:
-        raise PermissionError("OWNER authority is required for code changes")
-    _, project = _project(project_name)
-    path = _safe_path(project, relative)
-    current = read_file(project_name, relative)
-    if current["sha256"] != original_sha256:
-        raise RuntimeError("file changed since it was read; refresh before apply")
-    if len(content.encode("utf-8")) > MAX_FILE_BYTES:
-        raise ValueError("file is too large")
-    old_content = current["content"]
-    if old_content == content:
-        return {"applied": False, "validation": {"ok": True, "steps": []}, "sha256": original_sha256}
-    temporary = path.with_suffix(path.suffix + ".research-os-tmp")
-    temporary.write_text(content, encoding="utf-8")
-    temporary.replace(path)
-    validation = validate(project_name)
-    evidence_dir = _root() / "evidence" / "flutter-code-tool"
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    evidence = {
-        "tool": "owner-flutter-code-tool",
-        "principal": principal,
-        "project": project_name,
-        "path": current["path"],
-        "before_sha256": original_sha256,
-        "after_sha256": _sha(content),
-        "validation": validation,
-        "timestamp": time.time(),
-    }
-    if not validation["ok"]:
-        rollback = path.with_suffix(path.suffix + ".research-os-rollback")
-        rollback.write_text(old_content, encoding="utf-8")
-        rollback.replace(path)
-        evidence["rolled_back"] = True
-        evidence["final_sha256"] = _sha(old_content)
-    else:
-        evidence["rolled_back"] = False
-        evidence["final_sha256"] = _sha(content)
-    evidence_path = evidence_dir / f"{int(time.time() * 1000)}.json"
-    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"applied": not evidence["rolled_back"], "rolled_back": evidence["rolled_back"], "evidence": str(evidence_path), "validation": validation, "sha256": evidence["final_sha256"]}
+def apply(
+    project_name: str,
+    relative: str,
+    original_sha256: str,
+    content: str,
+    principal: str,
+) -> dict[str, Any]:
+    # Serialize applies within this Python process.
+    with _APPLY_LOCK:
+        configured_owners = (
+            os.environ.get("RESEARCH_OS_CODE_OWNER_IDS", ""),
+            os.environ.get("RESEARCH_OS_OWNER_EMAILS", ""),
+        )
+        allowed = {
+            item.strip().casefold()
+            for setting in configured_owners
+            for item in setting.split(",")
+            if item.strip()
+        }
+        if not allowed or principal.strip().casefold() not in allowed:
+            raise PermissionError("OWNER authority is required for code changes")
+
+        _, project = _project(project_name)
+        path = _safe_path(project, relative)
+        current = read_file(project_name, relative)
+
+        if current["sha256"] != original_sha256:
+            raise RuntimeError("file changed since it was read; refresh before apply")
+        if len(content.encode("utf-8")) > MAX_FILE_BYTES:
+            raise ValueError("file is too large")
+
+        old_bytes = path.read_bytes()
+        if _sha_bytes(old_bytes) != original_sha256:
+            raise RuntimeError("file changed since it was read; refresh before apply")
+
+        old_content = _normalize_newlines(old_bytes.decode("utf-8"))
+        if old_content == content:
+            return {
+                "applied": False,
+                "rolled_back": False,
+                "validation": {"ok": True, "steps": []},
+                "sha256": original_sha256,
+            }
+
+        new_bytes = content.encode("utf-8")
+        written_sha256 = _sha_bytes(new_bytes)
+        _atomic_write(path, new_bytes)
+
+        try:
+            validation = validate(project_name)
+        except Exception as exc:
+            validation = {
+                "ok": False,
+                "steps": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+        rolled_back = False
+        rollback_conflict = False
+
+        if not validation.get("ok", False):
+            # Roll back only if the file still contains exactly our write.
+            try:
+                observed_sha256 = _sha_bytes(path.read_bytes())
+            except OSError:
+                observed_sha256 = None
+
+            if observed_sha256 == written_sha256:
+                try:
+                    _atomic_write(path, old_bytes)
+                    rolled_back = True
+                except OSError:
+                    rollback_conflict = True
+            else:
+                # Never overwrite a concurrent external change.
+                rollback_conflict = True
+
+        try:
+            final_bytes = path.read_bytes()
+            final_sha256 = _sha_bytes(final_bytes)
+        except OSError:
+            final_sha256 = None
+
+        if not rolled_back and final_sha256 != written_sha256:
+            rollback_conflict = True
+        evidence = {
+            "tool": "owner-flutter-code-tool",
+            "principal": principal,
+            "project": project_name,
+            "path": current["path"],
+            "before_sha256": original_sha256,
+            "written_sha256": written_sha256,
+            "observed_final_sha256": final_sha256,
+            "validation": validation,
+            "rolled_back": rolled_back,
+            "rollback_conflict": rollback_conflict,
+            "final_sha256": final_sha256,
+            "timestamp": time.time(),
+        }
+
+        evidence_error = None
+        evidence_path = None
+        try:
+            evidence_dir = _root() / "evidence" / "flutter-code-tool"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            evidence_path = evidence_dir / (
+                f"{time.time_ns()}-{threading.get_ident()}.json"
+            )
+            evidence_path.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            # File changes may already have completed; report evidence failure separately.
+            evidence_error = f"{type(exc).__name__}: {exc}"
+            evidence_path = None
+
+        result = {
+            "applied": bool(validation.get("ok", False) and final_sha256 == written_sha256),
+            "rolled_back": rolled_back,
+            "rollback_conflict": rollback_conflict,
+            "evidence": str(evidence_path) if evidence_path else None,
+            "evidence_error": evidence_error,
+            "validation": validation,
+            "sha256": final_sha256,
+        }
+        if "error" in validation:
+            result["error"] = validation["error"]
+        return result

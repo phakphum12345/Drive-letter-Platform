@@ -12,6 +12,7 @@ from pathlib import Path
 
 import agent_server
 from agent_orchestrator import AgentOrchestrator
+from agent_runtime import AgentTaskQueue, SharedContextStore
 from auth_session import issue_session
 
 
@@ -22,8 +23,17 @@ class AgentServerTests(unittest.TestCase):
         os.environ["RESEARCH_OS_SESSION_SECRET"] = "test-only-agent-server-session-secret"
         self.session = issue_session({"sub": "agent-test-user", "email": "agent-test@example.test", "role": "owner"})
         self.temp_dir = tempfile.TemporaryDirectory()
+        temp_root = Path(self.temp_dir.name)
+
+        runtime = AgentTaskQueue(
+            context_store=SharedContextStore(
+                data_dir=temp_root / "runtime-data",
+            ),
+        )
+
         agent_server.ORCHESTRATOR = AgentOrchestrator(
-            storage_path=Path(self.temp_dir.name) / "agents" / "orchestrations.json",
+            runtime=runtime,
+            storage_path=temp_root / "agents" / "orchestrations.json",
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), agent_server.AgentResearchOSHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
