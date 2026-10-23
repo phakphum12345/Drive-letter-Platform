@@ -36,6 +36,8 @@ class ArchitectureCompletenessInspectorTests(unittest.TestCase):
             json.dumps(contract), encoding="utf-8"
         )
         for relative in contract["required_control_documents"]:
+            if relative == "current/ARCHITECTURE_COMPLETENESS_CONTRACT.json":
+                continue
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n", encoding="utf-8")

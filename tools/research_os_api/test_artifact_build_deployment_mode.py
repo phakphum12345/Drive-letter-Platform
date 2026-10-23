@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "artifacts-build.yml"
+WORKFLOW = ROOT / ".github" / "workflows-disabled-source" / "artifacts-build.yml"
 
 
 class ArtifactDeploymentModeTests(unittest.TestCase):
