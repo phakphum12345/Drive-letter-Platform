@@ -1,0 +1,140 @@
+import 'package:flutter/material.dart';
+
+import 'api/research_os_api_client.dart';
+import 'features/agents/agent_center_page.dart';
+import 'features/auth/google_login_page.dart';
+import 'features/brain_skills/brain_skills_page.dart';
+import 'features/chat/voice_conversation_page.dart';
+import 'features/control_center/native_control_center_page.dart';
+import 'features/developer_access/developer_access_page.dart';
+import 'features/friend/friend_connect_page.dart';
+import 'features/github/github_dashboard_page.dart';
+import 'features/google_workspace/google_workspace_page.dart';
+import 'features/graph/knowledge_graph_page.dart';
+import 'features/home/home_page.dart';
+import 'features/library/library_page.dart';
+import 'features/local_api/local_api_control_page.dart';
+import 'features/monitor/system_monitor_page.dart';
+import 'features/owner/owner_experience_page.dart';
+import 'features/workflows/workflow_experience_page.dart';
+import 'features/projects/project_experience_page.dart';
+import 'features/settings/settings_page.dart';
+import 'ui/enterprise_navigation.dart';
+import 'ui/research_os_sidebar_v2.dart';
+
+class ResearchOSAppShell extends StatefulWidget {
+  const ResearchOSAppShell({
+    required this.apiClient,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
+    this.onApiBaseUrlChanged,
+    this.onLogout,
+    super.key,
+  });
+
+  final ResearchOSApiClient apiClient;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
+  final Future<void> Function(String value)? onApiBaseUrlChanged;
+  final Future<void> Function()? onLogout;
+
+  @override
+  State<ResearchOSAppShell> createState() => _ResearchOSAppShellState();
+}
+
+class _ResearchOSAppShellState extends State<ResearchOSAppShell> {
+  Future<void> _handleLogout() async {
+    final callback = widget.onLogout;
+    if (callback == null) return;
+    try {
+      await callback();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('ออกจากระบบไม่สำเร็จ: $error')),
+      );
+    }
+  }
+
+  int _selectedIndex = 0;
+  bool _sidebarExpanded = false;
+
+  List<Widget> get _pages => <Widget>[
+        HomePage(apiClient: widget.apiClient, onNavigate: _select),
+        VoiceConversationPage(apiClient: widget.apiClient),
+        AgentCenterPage(apiClient: widget.apiClient),
+        LibraryPage(apiClient: widget.apiClient),
+        KnowledgeGraphPage(apiClient: widget.apiClient),
+        GitHubDashboardPage(apiClient: widget.apiClient),
+        GoogleWorkspacePage(apiClient: widget.apiClient),
+        const LocalApiControlPage(),
+        SystemMonitorPage(apiClient: widget.apiClient),
+        SettingsPage(
+          apiClient: widget.apiClient,
+          themeMode: widget.themeMode,
+          onThemeModeChanged:
+              widget.onThemeModeChanged ?? (ThemeMode value) {},
+          onApiBaseUrlChanged: widget.onApiBaseUrlChanged,
+        ),
+        DeveloperAccessPage(),
+        BrainSkillsPage(apiClient: widget.apiClient),
+        GoogleLoginPage(apiClient: widget.apiClient),
+        FriendConnectPage(apiClient: widget.apiClient),
+        ProjectExperiencePage(apiClient: widget.apiClient),
+        WorkflowExperiencePage(apiClient: widget.apiClient),
+        NativeControlCenterPage(
+          apiClient: widget.apiClient,
+          onNavigate: _select,
+        ),
+        OwnerExperiencePage(apiClient: widget.apiClient),
+      ];
+
+  void _select(int index) => setState(() => _selectedIndex = index);
+
+  void _toggleSidebar() {
+    setState(() => _sidebarExpanded = !_sidebarExpanded);
+  }
+
+  void _selectFromSidebar(int index) {
+    setState(() {
+      _selectedIndex = index;
+      _sidebarExpanded = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The product UI is canonical and shared across Windows, Web and iOS.
+    // Platform runners/shells provide the host boundary; they do not own a
+    // second product UI or navigation surface.
+    return Scaffold(
+      body: SafeArea(
+        child: Row(
+          children: <Widget>[
+            ResearchOSSidebarV2(
+              expanded: _sidebarExpanded,
+              selectedIndex: _selectedIndex,
+              onToggle: _toggleSidebar,
+              onSelected: _selectFromSidebar,
+              onLogout: widget.onLogout == null ? null : _handleLogout,
+            ),
+            Expanded(
+              child: Column(
+                key: const Key('desktop-content-pane'),
+                children: <Widget>[
+                  Expanded(
+                    child: IndexedStack(
+                      index: _selectedIndex,
+                      children: _pages,
+                    ),
+                  ),
+                  const ResearchStatusBar(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,881 @@
+#!/usr/bin/env python3
+"""Dependency-free Research OS HTTP API and Entrance UI server."""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import html
+import json
+import mimetypes
+import os
+import sys
+import urllib.error
+import urllib.request
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlsplit
+
+from api_auth import extract_session_token, require_session
+from developer_identity import IdentityAssertionError
+from developer_identity_gateway import mint_developer_assertion
+from auth_session import clear_cookie_header, revoke_session, verify_session
+from conversation_store import (
+    authorize as authorize_sync,
+    delete_session as delete_cloud_session,
+    list_sessions as list_cloud_sessions,
+    sync_configured,
+    upsert_session as upsert_cloud_session,
+)
+from github_status import (GitHubStatusError, accounts as github_accounts, dashboard as github_dashboard, repositories as github_repositories)
+from google_identity import GoogleIdentityBroker
+from google_oauth import GoogleOAuthBroker, GoogleOAuthError
+from google_workspace import GoogleWorkspaceConfig, get_google_workspace_dashboard
+from server_auth_routes import auth_pairing_authorize, auth_provider_handoff
+from identity_providers import provider_catalog
+from identity_context import resolve_identity_context
+from memory import build_context, search_memory
+from multi_login import MultiLoginError, begin_login
+from multi_login_runtime import MultiLoginRuntimeError, begin_runtime_login, complete_runtime_login
+from oauth_handoff import consume_handoff, create_handoff, handoff_root
+from qr_pairing import QRPairingError, cancel_pairing, create_pairing, get_status, claim_pairing_approval, release_pairing_approval, complete_pairing
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# The API supports both repository-root module execution and direct execution
+# from tools/research_os_api (the latter is used by the Windows/local launcher).
+# Bootstrap the repository import boundary before importing Platform modules.
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from tools.research_os_api.api_platform.management_http import ManagementHTTP
+from tools.research_os_api.api_platform.management_service import ManagementService
+from providers import ProviderError, build_provider
+from tools.platform_work_checkpoint import (
+    create_checkpoint,
+    list_checkpoints,
+    resume_checkpoint,
+)
+
+from tools.project_registry import ProjectRegistry
+from tools.project_scale_readiness import PROJECT_COUNT, build_project_definitions
+import copilot_service
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_web_dir(root: Path) -> Path:
+    """Resolve the source-tree or canonical packaged web UI directory."""
+    source_web = root / "apps" / "research_os_web"
+    if source_web.is_dir():
+        return source_web
+    return root / "platform" / "research_os_web"
+
+
+CURATOR_PATH = ROOT / "tools" / "research_curator" / "curator.py"
+KNOWLEDGE_OPS_PATH = ROOT / "tools" / "research_curator" / "knowledge_ops.py"
+ARTIFACT_DIR = ROOT / "research" / "artifacts"
+WEB_DIR = _resolve_web_dir(ROOT)
+STATIC_ROUTES = {"/": "index.html", "/index.html": "index.html", "/app.css": "app.css", "/app.js": "app.js"}
+DEFAULT_GITHUB_REPOSITORY = "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH"
+
+_MANAGEMENT_SERVICE: ManagementService | None = None
+
+def _management_http() -> ManagementHTTP:
+    global _MANAGEMENT_SERVICE
+    if _MANAGEMENT_SERVICE is None:
+        _MANAGEMENT_SERVICE = ManagementService.from_env()
+    def authenticate(headers: Any) -> dict[str, Any] | None:
+        try:
+            return require_session(headers)
+        except ValueError:
+            return None
+    return ManagementHTTP(_MANAGEMENT_SERVICE, authenticate)
+
+
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if not spec or not spec.loader:
+        raise RuntimeError(f"cannot load module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+FRIEND_BASE_URL = os.getenv("RESEARCH_OS_FRIEND_URL", "http://127.0.0.1:8790").rstrip("/")
+FRIEND_OWNER_ID = os.getenv("RESEARCH_OS_FRIEND_OWNER", "owner")
+
+
+def _friend_chat(text: str, *, session_id: str | None = None, complexity: int = 3, risk: int = 1, parallelism: int = 2, helper_budget: int = 0) -> dict[str, Any]:
+    payload = {"text": text, "complexity": max(1, int(complexity)), "risk": max(1, int(risk)), "parallelism": max(1, int(parallelism)), "helper_budget": max(0, int(helper_budget))}
+    request = urllib.request.Request(f"{FRIEND_BASE_URL}/owner/chat", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json; charset=utf-8", "X-Research-OS-Owner": FRIEND_OWNER_ID, "X-Research-OS-Profile": "default", "X-Research-OS-Session": session_id or "main-api"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Friend service HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Friend service unavailable at {FRIEND_BASE_URL}: {exc.reason}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Friend service returned an invalid response")
+    return value
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def _project_registry_snapshot() -> dict[str, Any]:
+    registry = ProjectRegistry(build_project_definitions(1))
+    projects = [
+        {
+            "project_id": project.project_id,
+            "display_name": project.display_name,
+            "version": project.version,
+            "capabilities": list(project.capabilities),
+            "authorization_policy": project.authorization_policy,
+            "workflow_profile": project.workflow_profile,
+            "evidence_namespace": project.evidence_namespace,
+            "resource_policy": project.resource_policy,
+            "capability_namespace": project.capability_namespace,
+            "queue_namespace": project.queue_namespace,
+            "evidence_ledger": project.evidence_ledger,
+            "release_authority": project.release_authority,
+        }
+        for project in registry.all()
+    ]
+    return {
+        "projects": projects,
+        "configured_count": len(projects),
+        "supported_project_contexts": PROJECT_COUNT,
+        "scale_levels": [10, 20, 50, 100],
+        "shared_planes": {
+            "capability_registry": "SHARED_CAPABILITY_REGISTRY",
+            "queue": "SHARED_QUEUE",
+            "evidence_ledger": "SHARED_EVIDENCE_LEDGER",
+        },
+        "source": "ProjectRegistry",
+        "release_authority": "FINAL_GATE",
+        "execution_authority": "EXISTING_SHARED_EXECUTION_PLANE",
+    }
+
+
+class ResearchOSHandler(BaseHTTPRequestHandler):
+    server_version = "ResearchOSAPI/0.8"
+
+    def _send(self, status: int, payload: Any) -> None:
+        body = _json_bytes(payload)
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html(
+        self,
+        status: int,
+        html: str,
+        cookie: str | None = None,
+    ) -> None:
+        body = html.encode("utf-8")
+        self.send_response(status)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirect(self, location: str, cookie: str | None = None) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _send_static(self, filename: str) -> None:
+        path = (WEB_DIR / filename).resolve()
+        if WEB_DIR.resolve() not in path.parents or not path.is_file():
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        body = path.read_bytes()
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type == "application/javascript":
+            content_type += "; charset=utf-8"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        try:
+            value = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid JSON: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ValueError("JSON body must be an object")
+        return value
+
+    def _authorize_sync_key(self) -> bool:
+        if not sync_configured():
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "cloud_sync_not_configured", "detail": "Set RESEARCH_OS_SYNC_KEY on the server before using protected cloud operations."})
+            return False
+        candidate = self.headers.get("X-Research-OS-Sync-Key")
+        if not authorize_sync(candidate):
+            self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_sync_key", "detail": "Cloud sync key is missing or invalid."})
+            return False
+        return True
+
+    def _authorize_cloud_sync(self) -> dict[str, Any] | None:
+        if not self._authorize_sync_key():
+            return None
+        try:
+            principal = require_session(self.headers)
+        except ValueError:
+            self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_session", "detail": "A valid Research OS session is required."})
+            return None
+        user_id = str(principal.get("user_id") or "").strip()
+        if not user_id:
+            self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_session", "detail": "Verified session identity is incomplete."})
+            return None
+        return principal
+
+    def _multi_login_redirect(self, provider: str) -> str:
+        explicit = (os.getenv("RESEARCH_OS_LOGIN_REDIRECT_URI") or "").strip()
+        if explicit:
+            return explicit.rstrip("/") + f"/v1/auth/{provider}/callback"
+        public_base = (os.getenv("RESEARCH_OS_PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+        if public_base:
+            return f"{public_base}/v1/auth/{provider}/callback"
+        port = int(os.getenv("RESEARCH_OS_API_PORT", "8787"))
+        return f"http://127.0.0.1:{port}/v1/auth/{provider}/callback"
+
+    def _pairing_base_url(self) -> str:
+        explicit = (
+            os.getenv("RESEARCH_OS_PAIRING_BASE_URL")
+            or os.getenv("RESEARCH_OS_PUBLIC_BASE_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")
+        )
+        if explicit and explicit.strip():
+            base_url = explicit.strip().rstrip("/")
+            parsed = urlsplit(base_url)
+            hostname = (parsed.hostname or "").lower()
+            is_loopback = hostname in {"127.0.0.1", "localhost", "::1"}
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("Research OS pairing base URL must be an absolute HTTP(S) URL")
+            if parsed.scheme != "https" and not is_loopback:
+                raise ValueError("Public Research OS pairing URLs must use HTTPS")
+            return base_url
+
+        host = str(self.headers.get("Host") or "").strip()
+        if host:
+            parsed_host = urlsplit(f"//{host}")
+            hostname = (parsed_host.hostname or "").lower()
+            if hostname in {"127.0.0.1", "localhost", "::1"}:
+                return f"http://{host.rstrip('/')}"
+            raise ValueError(
+                "Configure RESEARCH_OS_PAIRING_BASE_URL or RESEARCH_OS_PUBLIC_BASE_URL "
+                "to an HTTPS URL before creating a public QR pairing code"
+            )
+        port = int(os.getenv("RESEARCH_OS_API_PORT", "8787"))
+        return f"http://127.0.0.1:{port}"
+
+    def _auth_status(self) -> dict[str, Any]:
+        token = extract_session_token(self.headers)
+        if not token:
+            return {"connected": False, "account": None}
+        try:
+            session = verify_session(token)
+        except ValueError:
+            return {"connected": False, "account": None}
+        return {"connected": True, "account": {"user_id": session["user_id"], "email": session["email"], "role": session["role"]}}
+
+    def _authorize_github_account_control(self) -> bool:
+        """Protect account/repository enumeration with the existing owner authority."""
+        try:
+            principal = require_session(self.headers)
+        except ValueError:
+            self._send(HTTPStatus.UNAUTHORIZED, {"error": "authentication_required"})
+            return False
+        if str(principal.get("role") or "").strip().upper() != "OWNER":
+            self._send(HTTPStatus.FORBIDDEN, {"error": "owner_required"})
+            return False
+        return True
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        try:
+            if path.startswith("/platform/v1"):
+                status, payload = _management_http().dispatch("GET", self.path, self.headers)
+                self._send(status, payload)
+                return
+            if path in STATIC_ROUTES:
+                self._send_static(STATIC_ROUTES[path])
+                return
+            if path == "/health":
+                google_workspace_connected = False
+                try:
+                    workspace = get_google_workspace_dashboard()
+                    google_workspace_connected = bool(workspace.get("connected"))
+                except Exception:
+                    pass
+                self._send(HTTPStatus.OK, {"status": "ok", "service": "research-os-api", "version": "0.8.0", "ui": WEB_DIR.is_dir(), "memory": True, "memory_commit": sync_configured(), "github": True, "cloud_sync": sync_configured(), "google_workspace": True, "google_workspace_connected": google_workspace_connected})
+                return
+            if path == "/v1/projects":
+                self._send(HTTPStatus.OK, _project_registry_snapshot())
+                return
+            if path == "/v1/providers":
+                self._send(HTTPStatus.OK, {"providers": ["mock", "openai-compatible", "local", "anthropic", "gemini"], "active": os.getenv("RESEARCH_OS_PROVIDER", "mock")})
+                return
+            if path == "/v1/ai/connections":
+                from tools.research_os_ai_provider_connection import inspect
+                self._send(HTTPStatus.OK, inspect())
+                return
+            if path == "/v1/auth/providers":
+                self._send(HTTPStatus.OK, {"providers": provider_catalog()})
+                return
+            if path == "/v1/auth/pairing/status":
+                params = parse_qs(parsed.query)
+                self._send(HTTPStatus.OK, get_status(
+                    str(params.get("pairing_id", [""])[0]).strip(),
+                    str(params.get("secret", [""])[0]).strip(),
+                ))
+                return
+            if path == "/v1/auth/pairing/open":
+                params = parse_qs(parsed.query)
+                pairing_id = str(params.get("pairing_id", [""])[0]).strip()
+                secret = str(params.get("secret", [""])[0]).strip()
+                pairing_status = get_status(pairing_id, secret)
+                token = extract_session_token(self.headers)
+                try:
+                    principal = verify_session(token)
+                except ValueError:
+                    principal = None
+                pid = html.escape(pairing_id, quote=True)
+                sec = html.escape(secret, quote=True)
+                if principal is not None:
+                    email = html.escape(str(principal.get("email") or "signed-in account"), quote=True)
+                    body = (
+                        '<html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
+                        '<title>Approve Research OS device</title></head>'
+                        '<body style="font-family:system-ui;max-width:520px;margin:48px auto;padding:20px">'
+                        '<h2>Approve this device</h2>'
+                        f'<p>Signed in as <strong>{email}</strong>.</p>'
+                        '<p>Approve sharing this existing Research OS session with the device showing this QR code?</p>'
+                        '<button id="approve" style="padding:12px 18px;border:1px solid #888;border-radius:8px">Approve device</button>'
+                        '<p id="status" role="status"></p>'
+                        '<script>'
+                        'document.getElementById("approve").addEventListener("click", async () => {'
+                        'const button=document.getElementById("approve");button.disabled=true;'
+                        'try { const response=await fetch("/v1/auth/pairing/approve",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairing_id:"'
+                        + pid + '",pairing_secret:"' + sec + '"})});'
+                        'const result=await response.json();'
+                        'if(!response.ok) throw new Error(result.detail||result.error||"Approval failed");'
+                        'document.getElementById("status").textContent="Device connected. Return to Research OS.";'
+                        '} catch(error) { document.getElementById("status").textContent=String(error);button.disabled=false; }'
+                        '});</script></body></html>'
+                    )
+                else:
+                    buttons = []
+                    for item in provider_catalog():
+                        if not isinstance(item, dict) or item.get("available") is not True:
+                            continue
+                        provider = html.escape(str(item.get("id") or "").strip(), quote=True)
+                        name = html.escape(str(item.get("name") or provider), quote=True)
+                        href = f"/v1/auth/pairing/authorize?provider={provider}&pairing_id={pid}&secret={sec}"
+                        buttons.append(f'<p><a href="{href}" style="display:inline-block;padding:12px 18px;border:1px solid #888;border-radius:8px;text-decoration:none">{name}</a></p>')
+                    body = (
+                        '<html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
+                        '<title>Research OS Connect</title></head><body style="font-family:system-ui;max-width:520px;margin:48px auto;padding:20px">'
+                        '<h2>Research OS</h2><p>Sign in on this device first, then approve sharing that existing session with the device showing the QR code.</p>'
+                        + "".join(buttons)
+                        + '<p>This pairing is single-use and expires automatically.</p></body></html>'
+                    )
+                self._send_html(HTTPStatus.OK, body)
+                return
+            if path == "/v1/auth/pairing/authorize":
+                params = parse_qs(parsed.query)
+                provider = str(params.get("provider", [""])[0]).strip().lower()
+                pairing_id = str(params.get("pairing_id", [""])[0]).strip()
+                secret = str(params.get("secret", [""])[0]).strip()
+                authorization_url = auth_pairing_authorize(
+                    provider, pairing_id, secret, self._multi_login_redirect(provider)
+                )
+                self._redirect(authorization_url)
+                return
+            if path in {"/v1/auth/status", "/v1/auth/google/status"}:
+                self._send(HTTPStatus.OK, self._auth_status())
+                return
+            if path == "/v1/auth/google/callback":
+                from server_auth_routes import google_auth_callback
+                result, cookie = google_auth_callback(parsed.query)
+                pairing = result.get("pairing") if isinstance(result, dict) else None
+                account = result.get("account") if isinstance(result.get("account"), dict) else {}
+                email = html.escape(str(account.get("email") or "account"), quote=True)
+                if pairing:
+                    location = "/v1/auth/pairing/open?" + urlencode({
+                        "pairing_id": pairing["pairing_id"],
+                        "secret": pairing["pairing_secret"],
+                    })
+                    self._redirect(location, cookie)
+                else:
+                    self._send_html(HTTPStatus.OK, f"<html><body><h2>Signed in to Research OS</h2><p>{email}</p><p>You can close this window.</p></body></html>")
+                return
+            for provider in ("microsoft", "github"):
+                if path == f"/v1/auth/{provider}/callback":
+                    result, cookie = __import__("server_auth_routes").auth_callback(provider, parsed.query)
+                    pairing = result.get("pairing") if isinstance(result, dict) else None
+                    if pairing:
+                        location = "/v1/auth/pairing/open?" + urlencode({
+                            "pairing_id": pairing["pairing_id"],
+                            "secret": pairing["pairing_secret"],
+                        })
+                        self._redirect(location, cookie)
+                    else:
+                        self._redirect("/", cookie)
+                    return
+            if path == "/v1/google-workspace/dashboard":
+                self._send(HTTPStatus.OK, get_google_workspace_dashboard())
+                return
+            if path == "/v1/google-workspace/oauth/status":
+                self._send(HTTPStatus.OK, GoogleOAuthBroker().status())
+                return
+            if path == "/v1/google-workspace/oauth/callback":
+                params = parse_qs(parsed.query)
+                error = str(params.get("error", [""])[0]).strip()
+                if error:
+                    self._send_html(HTTPStatus.BAD_REQUEST, f"<html><body><h2>Google Workspace connection failed</h2><p>{error}</p><p>You can close this window and return to Research OS.</p></body></html>")
+                    return
+                code = str(params.get("code", [""])[0]).strip()
+                state = str(params.get("state", [""])[0]).strip()
+                if not code or not state:
+                    raise ValueError("Google OAuth callback requires code and state")
+                result = GoogleOAuthBroker().complete(code=code, state=state)
+                email = ((result.get("account") or {}).get("email") or "Google account")
+                self._send_html(HTTPStatus.OK, f"<html><body><h2>Research OS connected to Google Workspace</h2><p>{email}</p><p>You can close this window and return to Research OS.</p></body></html>")
+                return
+            if path == "/v1/platform/work-checkpoints":
+                principal = require_session(self.headers)
+                user_id = str(principal.get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("verified session identity is incomplete")
+                params = parse_qs(parsed.query)
+                task_id = str(params.get("task_id", [""])[0]).strip() or None
+                records = list_checkpoints(user_id, task_id)
+                self._send(HTTPStatus.OK, {
+                    "checkpoints": records,
+                    "count": len(records),
+                    "source": "platform-work-checkpoint",
+                    "chat_is_not_source_of_truth": True,
+                })
+                return
+            if path == "/v1/conversations/cloud":
+                principal = self._authorize_cloud_sync()
+                if principal is None:
+                    return
+                sessions = list_cloud_sessions(str(principal["user_id"]))
+                self._send(HTTPStatus.OK, {"sessions": sessions, "count": len(sessions), "durability": "ephemeral-json", "knowledge_persisted": False})
+                return
+            if path == "/v1/memory/search":
+                params = parse_qs(parsed.query)
+                query = str(params.get("q", [""])[0]).strip()
+                if not query:
+                    raise ValueError("q is required")
+                limit = int(params.get("limit", ["5"])[0])
+                hits = search_memory(ARTIFACT_DIR, query, limit)
+                self._send(HTTPStatus.OK, {"query": query, "count": len(hits), "hits": hits, "source": "research/artifacts"})
+                return
+            if path == "/v1/knowledge/artifacts":
+                self._send(HTTPStatus.OK, {"artifacts": self._artifact_index()})
+                return
+            if path == "/v1/knowledge/graph":
+                knowledge_ops = _load_module("research_os_knowledge_ops", KNOWLEDGE_OPS_PATH)
+                artifacts = knowledge_ops.load_all(ARTIFACT_DIR)
+                self._send(HTTPStatus.OK, knowledge_ops.graph_payload(artifacts))
+                return
+            if path == "/v1/copilot/context":
+                identity = resolve_identity_context(self.headers)
+                params = parse_qs(parsed.query)
+                query = str(params.get("query", [""])[0]).strip()
+                paths = params.get("path", [])
+                self._send(
+                    HTTPStatus.OK,
+                    copilot_service.build_copilot_context(
+                        identity,
+                        query=query,
+                        paths=paths,
+                        memory_limit=copilot_service.normalize_memory_limit(params.get("memory_limit", ["5"])[0]),
+                    ),
+                )
+                return
+            if path == "/v1/github/accounts":
+                if not self._authorize_github_account_control():
+                    return
+                self._send(HTTPStatus.OK, github_accounts())
+                return
+            if path == "/v1/github/repositories":
+                if not self._authorize_github_account_control():
+                    return
+                params = parse_qs(parsed.query)
+                account_id = str(params.get("account_id", [""])[0]).strip()
+                page = int(params.get("page", ["1"])[0])
+                self._send(HTTPStatus.OK, github_repositories(account_id, page=page))
+                return
+            if path == "/v1/github/dashboard":
+                params = parse_qs(parsed.query)
+                repository = str(params.get("repository", [os.getenv("RESEARCH_OS_GITHUB_REPOSITORY", DEFAULT_GITHUB_REPOSITORY)])[0]).strip()
+                account_id = str(params.get("account_id", [""])[0]).strip() or None
+                if account_id and not self._authorize_github_account_control():
+                    return
+                self._send(HTTPStatus.OK, github_dashboard(repository, account_id=account_id))
+                return
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": path})
+        except (ValueError, KeyError, GoogleOAuthError, MultiLoginError, MultiLoginRuntimeError, QRPairingError) as exc:
+            self._send(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "detail": str(exc)})
+        except GitHubStatusError as exc:
+            self._send(HTTPStatus.BAD_GATEWAY, {"error": "github_error", "detail": str(exc)})
+        except Exception as exc:
+            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error", "detail": str(exc)})
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        path = urlsplit(self.path).path
+        try:
+            body = self._read_json()
+            if path.startswith("/platform/v1"):
+                status, payload = _management_http().dispatch("PATCH", self.path, self.headers, body)
+                self._send(status, payload)
+                return
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": path})
+        except (ValueError, KeyError) as exc:
+            self._send(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "detail": str(exc)})
+        except Exception as exc:
+            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error", "detail": str(exc)})
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlsplit(self.path).path
+        try:
+            body = self._read_json()
+            if path.startswith("/platform/v1"):
+                status, payload = _management_http().dispatch("POST", self.path, self.headers, body)
+                self._send(status, payload)
+                return
+            if path == "/v1/platform/work-checkpoints":
+                principal = require_session(self.headers)
+                user_id = str(principal.get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("verified session identity is incomplete")
+                payload = dict(body)
+                payload.pop("owner_id", None)
+                record = create_checkpoint(
+                    owner_id=user_id,
+                    task_id=str(payload.get("task_id", "")),
+                    workflow_state=str(payload.get("workflow_state", "")),
+                    current_step=str(payload.get("current_step", "")),
+                    completed_steps=payload.get("completed_steps"),
+                    pending_steps=payload.get("pending_steps"),
+                    evidence_refs=payload.get("evidence_refs"),
+                    deferred_work=payload.get("deferred_work"),
+                    context_refs=payload.get("context_refs"),
+                    next_action=str(payload.get("next_action", "recon")),
+                    source_sha=payload.get("source_sha"),
+                    supersedes=payload.get("supersedes"),
+                )
+                self._send(HTTPStatus.CREATED, {"checkpoint": record, "persisted": True, "chat_is_not_source_of_truth": True})
+                return
+            if path == "/v1/platform/work-checkpoints/resume":
+                principal = require_session(self.headers)
+                user_id = str(principal.get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("verified session identity is incomplete")
+                checkpoint_id = str(body.get("checkpoint_id", "")).strip()
+                if not checkpoint_id:
+                    raise ValueError("checkpoint_id is required")
+                self._send(HTTPStatus.OK, resume_checkpoint(user_id, checkpoint_id))
+                return
+            if path == "/v1/auth/pairing/start":
+                pairing = create_pairing()
+                pairing_url = f"{self._pairing_base_url()}/v1/auth/pairing/open?pairing_id={pairing['pairing_id']}&secret={pairing['pairing_secret']}"
+                self._send(HTTPStatus.CREATED, {**pairing, "qr_payload": pairing_url, "pairing_url": pairing_url, "qr_type": "research_os_pairing", "session_in_qr": False})
+                return
+            if path == "/v1/auth/pairing/approve":
+                token = extract_session_token(self.headers)
+                try:
+                    principal = verify_session(token)
+                except ValueError as exc:
+                    self._send(HTTPStatus.UNAUTHORIZED, {"error": "authentication_required", "detail": str(exc)})
+                    return
+                pairing_id = str(body.get("pairing_id") or "").strip()
+                pairing_secret = str(body.get("pairing_secret") or "").strip()
+                claimed = False
+                try:
+                    claim_pairing_approval(pairing_id, pairing_secret)
+                    claimed = True
+                    user_id = str(principal.get("user_id") or "")
+                    provider = user_id.split(":", 1)[0].lower() if ":" in user_id else "existing_session"
+                    create_handoff(handoff_root(), token, "", code=pairing_secret)
+                    complete_pairing(
+                        pairing_id,
+                        provider=provider,
+                        account=principal,
+                    )
+                    claimed = False
+                except (QRPairingError, ValueError, OSError) as exc:
+                    if claimed:
+                        try:
+                            release_pairing_approval(pairing_id, pairing_secret)
+                        except (QRPairingError, ValueError):
+                            pass
+                    self._send(HTTPStatus.BAD_REQUEST, {"error": "pairing_approval_failed", "detail": str(exc)})
+                    return
+                self._send(HTTPStatus.OK, {
+                    "pairing_id": pairing_id,
+                    "status": "CONNECTED",
+                    "connected": True,
+                    "handoff_ready": True,
+                    "account": {
+                        "user_id": principal.get("user_id"),
+                        "email": principal.get("email"),
+                        "role": principal.get("role"),
+                    },
+                })
+                return
+            if path == "/v1/auth/pairing/cancel":
+                self._send(HTTPStatus.OK, cancel_pairing(str(body.get("pairing_id") or "").strip(), str(body.get("pairing_secret") or "").strip()))
+                return
+            if path == "/v1/auth/providers/login":
+                provider = str(body.get("provider", "")).strip().lower()
+                if provider == "google":
+                    self._send(HTTPStatus.OK, GoogleIdentityBroker().begin())
+                    return
+                redirect_uri = self._multi_login_redirect(provider)
+                state, authorization_url = begin_runtime_login(provider, redirect_uri)
+                self._send(HTTPStatus.OK, {"provider": provider, "state": state, "authorization_url": authorization_url, "redirect_uri": redirect_uri, "token_storage": "backend_only"})
+                return
+            if path == "/v1/auth/google/start":
+                self._send(HTTPStatus.OK, GoogleIdentityBroker().begin())
+                return
+            if path == "/v1/auth/providers/handoff":
+                handoff_state = str(self.headers.get("X-Research-OS-OAuth-State") or "").strip()
+                self._send(HTTPStatus.OK, auth_provider_handoff(handoff_state))
+                return
+            if path == "/v1/auth/developer/assertion":
+                token = extract_session_token(self.headers)
+                try:
+                    principal = verify_session(token)
+                except ValueError as exc:
+                    self._send(
+                        HTTPStatus.UNAUTHORIZED,
+                        {"error": "invalid_session", "detail": str(exc)},
+                    )
+                    return
+                try:
+                    assertion = mint_developer_assertion(principal)
+                except IdentityAssertionError as exc:
+                    message = str(exc)
+                    status = (
+                        HTTPStatus.SERVICE_UNAVAILABLE
+                        if "not configured" in message
+                        else HTTPStatus.UNAUTHORIZED
+                    )
+                    self._send(
+                        status,
+                        {"error": "developer_identity_unavailable", "detail": message},
+                    )
+                    return
+                self._send(HTTPStatus.OK, assertion)
+                return
+            if path == "/v1/auth/google/handoff":
+                handoff_code = str(self.headers.get("X-Research-OS-OAuth-State") or "").strip()
+                if not handoff_code:
+                    self._send(HTTPStatus.UNAUTHORIZED, {"error": "oauth_handoff_required", "detail": "A one-time Google OAuth handoff state is required."})
+                    return
+                session = consume_handoff(GoogleIdentityBroker().root, handoff_code)
+                if not session:
+                    self._send(HTTPStatus.UNAUTHORIZED, {"error": "oauth_handoff_invalid", "detail": "The Google OAuth handoff is missing, expired, or already consumed."})
+                    return
+                principal = verify_session(session)
+                self._send(HTTPStatus.OK, {"connected": True, "session": session, "account": {"user_id": principal["user_id"], "email": principal["email"], "role": principal["role"]}, "token_type": "research_os_session"})
+                return
+            if path in {"/v1/auth/signout", "/v1/auth/google/signout"}:
+                token = extract_session_token(self.headers)
+                if token:
+                    try:
+                        revoke_session(token)
+                    except ValueError:
+                        pass
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Set-Cookie", clear_cookie_header())
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                body_bytes = _json_bytes({"signed_out": True})
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.end_headers()
+                self.wfile.write(body_bytes)
+                return
+            if path == "/v1/google-workspace/oauth/start":
+                self._send(HTTPStatus.OK, GoogleOAuthBroker().begin())
+                return
+            if path == "/v1/google-workspace/oauth/disconnect":
+                self._send(HTTPStatus.OK, GoogleOAuthBroker().disconnect())
+                return
+            if path == "/v1/google-workspace/services":
+                services = body.get("enabled_services")
+                if not isinstance(services, list):
+                    raise ValueError("enabled_services must be an array")
+                config = GoogleWorkspaceConfig()
+                config.set_enabled_services(str(item) for item in services)
+                self._send(HTTPStatus.OK, config.dashboard())
+                return
+            if path == "/v1/conversations/cloud/sync":
+                principal = self._authorize_cloud_sync()
+                if principal is None:
+                    return
+                session = body.get("session")
+                if not isinstance(session, dict):
+                    raise ValueError("session must be an object")
+                saved = upsert_cloud_session(session, user_id=str(principal["user_id"]))
+                self._send(HTTPStatus.OK, {"session": saved, "synced": True, "knowledge_persisted": False})
+                return
+            if path == "/v1/conversations/cloud/delete":
+                principal = self._authorize_cloud_sync()
+                if principal is None:
+                    return
+                session_id_value = str(body.get("session_id", "")).strip()
+                deleted = delete_cloud_session(session_id_value, user_id=str(principal["user_id"]))
+                self._send(HTTPStatus.OK, {"session_id": session_id_value, "deleted": deleted})
+                return
+            if path == "/v1/ai/generate":
+                prompt = str(body.get("prompt", "")).strip()
+                if not prompt:
+                    raise ValueError("prompt is required")
+                route = os.getenv("RESEARCH_OS_AI_ROUTE", "friend").strip().lower()
+                if route == "direct-provider":
+                    result = build_provider(body.get("provider")).generate(prompt, system=str(body.get("system", "")), model=body.get("model"))
+                    self._send(HTTPStatus.OK, {"provider": result.provider, "model": result.model, "text": result.text, "session_id": body.get("session_id"), "route": "direct-provider"})
+                    return
+                friend = _friend_chat(prompt, session_id=str(body.get("session_id") or "main-api"), complexity=int(body.get("complexity", 3)), risk=int(body.get("risk", 1)), parallelism=int(body.get("parallelism", 2)), helper_budget=int(body.get("helper_budget", 0)))
+                self._send(HTTPStatus.OK, {"provider": friend.get("provider"), "model": "friend-unified-master", "text": friend.get("text", ""), "session_id": body.get("session_id"), "route": "friend", "decision": friend.get("decision"), "factory": friend.get("factory"), "helpers": friend.get("helpers"), "metadata": friend.get("metadata")})
+                return
+            if path == "/v1/ai/answer-with-memory":
+                question = str(body.get("question", "")).strip()
+                if not question:
+                    raise ValueError("question is required")
+                limit = int(body.get("limit", 5))
+                hits = search_memory(ARTIFACT_DIR, question, limit)
+                context = build_context(hits)
+                system = "Answer using the supplied Research OS memory. Distinguish stored facts from inference. When memory is insufficient, say so. Do not invent artifact contents."
+                prompt = f"Memory:\n{context or '(no matching memory)'}\n\nQuestion:\n{question}"
+                route = os.getenv("RESEARCH_OS_AI_ROUTE", "friend").strip().lower()
+                if route == "direct-provider":
+                    result = build_provider(body.get("provider")).generate(prompt, system=system, model=body.get("model"))
+                    self._send(HTTPStatus.OK, {"provider": result.provider, "model": result.model, "text": result.text, "memory_hits": hits, "memory_count": len(hits), "session_id": body.get("session_id"), "route": "direct-provider"})
+                    return
+                friend = _friend_chat(f"{system}\n\n{prompt}", session_id=str(body.get("session_id") or "main-api-memory"), complexity=int(body.get("complexity", 3)), risk=int(body.get("risk", 1)), parallelism=int(body.get("parallelism", 2)), helper_budget=int(body.get("helper_budget", 0)))
+                self._send(HTTPStatus.OK, {"provider": friend.get("provider"), "model": "friend-unified-master", "text": friend.get("text", ""), "memory_hits": hits, "memory_count": len(hits), "session_id": body.get("session_id"), "route": "friend", "decision": friend.get("decision"), "factory": friend.get("factory"), "helpers": friend.get("helpers")})
+                return
+            if path == "/v1/copilot/chat":
+                identity = resolve_identity_context(self.headers)
+                self._send(HTTPStatus.OK, copilot_service.chat_with_copilot(identity, body))
+                return
+            if path == "/v1/conversations/analyze":
+                self._send(HTTPStatus.OK, self._analyze_conversation(body))
+                return
+            if path == "/v1/memory/commit":
+                if not self._authorize_sync_key():
+                    return
+                self._send(HTTPStatus.OK, self._commit_memory(body))
+                return
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": path})
+        except (TypeError, ValueError, GoogleOAuthError, MultiLoginError, MultiLoginRuntimeError) as exc:
+            self._send(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "detail": str(exc)})
+        except ProviderError as exc:
+            self._send(HTTPStatus.BAD_GATEWAY, {"error": "provider_error", "detail": str(exc)})
+        except copilot_service.CopilotChatConfigError as exc:
+            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "copilot_config_error", "detail": str(exc)})
+        except copilot_service.CopilotChatError as exc:
+            self._send(HTTPStatus.BAD_GATEWAY, {"error": "copilot_error", "detail": str(exc)})
+        except Exception as exc:
+            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error", "detail": str(exc)})
+
+    def _extract_conversation_artifact(self, body: dict[str, Any]):
+        conversation = body.get("conversation")
+        if isinstance(conversation, list):
+            source = json.dumps(conversation, ensure_ascii=False)
+        elif isinstance(conversation, str):
+            source = conversation
+        else:
+            raise ValueError("conversation must be a string or message array")
+        curator = _load_module("research_os_curator", CURATOR_PATH)
+        normalized = curator._normalize_source(source)
+        relationships = [curator._parse_relationship(item) for item in body.get("relationships", [])]
+        artifact = curator._deterministic_extract(normalized, str(body.get("title", "Research Session")), str(body.get("status", "hypothesis")), [str(x) for x in body.get("tags", [])], [str(x) for x in body.get("evidence", [])], relationships, ARTIFACT_DIR)
+        return curator, artifact
+
+    def _analyze_conversation(self, body: dict[str, Any]) -> dict[str, Any]:
+        curator, artifact = self._extract_conversation_artifact(body)
+        return {"artifact": curator.asdict(artifact), "accepted": artifact.quality_score >= int(body.get("min_quality", 20)), "persisted": False, "note": "API analysis is preview-only; persistence requires explicit memory commit."}
+
+    def _commit_memory(self, body: dict[str, Any]) -> dict[str, Any]:
+        if body.get("confirm") is not True:
+            raise ValueError("confirm must be true for explicit memory persistence")
+        curator, artifact = self._extract_conversation_artifact(body)
+        min_quality = int(body.get("min_quality", 20))
+        if artifact.quality_score < min_quality:
+            return {"artifact": curator.asdict(artifact), "accepted": False, "persisted": False, "reason": "quality_below_threshold", "durability": "runtime-ephemeral"}
+        if artifact.duplicate_of and not bool(body.get("allow_duplicate", False)):
+            return {"artifact": curator.asdict(artifact), "accepted": True, "persisted": False, "reason": "duplicate", "duplicate_of": artifact.duplicate_of, "durability": "runtime-ephemeral"}
+        target = curator._write_artifact(ARTIFACT_DIR, artifact, allow_duplicate=bool(body.get("allow_duplicate", False)))
+        curator._update_index(ARTIFACT_DIR)
+        return {"artifact": curator.asdict(artifact), "accepted": True, "persisted": True, "path": str(target.relative_to(ROOT)) if ROOT in target.parents else str(target), "durability": "runtime-ephemeral", "note": "Memory is available to Research OS immediately. Render free-service filesystem is ephemeral; durable Git-backed memory is a later storage phase."}
+
+    @staticmethod
+    def _artifact_index() -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        if not ARTIFACT_DIR.exists():
+            return results
+        for path in sorted(ARTIFACT_DIR.glob("RES-*.md")):
+            text = path.read_text(encoding="utf-8")
+            metadata: dict[str, str] = {}
+            if text.startswith("---\n"):
+                end = text.find("\n---", 4)
+                if end > 0:
+                    for line in text[4:end].splitlines():
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            metadata[key.strip()] = value.strip().strip('"')
+            results.append({"artifact_id": metadata.get("artifact_id", path.stem), "title": metadata.get("title", ""), "status": metadata.get("status", ""), "path": str(path.relative_to(ROOT)) if ROOT in path.parents else str(path)})
+        return results
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        sys.stderr.write("[research-os-api] " + (fmt % args) + "\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Research OS provider-agnostic HTTP API")
+    parser.add_argument("--host", default=os.getenv("RESEARCH_OS_API_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("RESEARCH_OS_API_PORT", "8787")))
+    args = parser.parse_args()
+    server = ThreadingHTTPServer((args.host, args.port), ResearchOSHandler)
+    print(f"Research OS listening on http://{args.host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

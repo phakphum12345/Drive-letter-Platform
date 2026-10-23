@@ -1,0 +1,297 @@
+name: Research OS Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact source commit SHA to build and validate
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact source commit SHA to build and validate
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-os-candidate-${{ inputs.target_sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+  RESEARCH_OS_PROVIDER: mock
+  RESEARCH_OS_SYNC_KEY: candidate-test-key
+  RESEARCH_OS_ALLOW_LEGACY_IDENTITY_HEADERS: "1"
+
+jobs:
+  windows-candidate:
+    name: Full Windows Candidate
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: src
+          fetch-depth: 1
+
+      - name: Resolve immutable candidate identity
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checkoutSha = (git rev-parse HEAD).Trim()
+          if ($checkoutSha -ne $env:TARGET_SHA) {
+            throw "SOURCE_SHA_MISMATCH: target=$env:TARGET_SHA checkout=$checkoutSha"
+          }
+          $candidateId = "RO-WIN-$($checkoutSha.Substring(0,12))-$env:GITHUB_RUN_ID"
+          "CHECKOUT_SHA=$checkoutSha" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "CANDIDATE_ID=$candidateId" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          @{
+            candidate_id = $candidateId
+            source_sha = $checkoutSha
+            workflow_run_id = $env:GITHUB_RUN_ID
+            workflow_attempt = $env:GITHUB_RUN_ATTEMPT
+          } | ConvertTo-Json -Depth 5 | Set-Content "$env:GITHUB_WORKSPACE\candidate-manifest.json" -Encoding utf8
+          Write-Host "CANDIDATE_ID=$candidateId"
+          Write-Host "SOURCE_SHA=$checkoutSha"
+
+      - name: Preflight repository and V3 gates
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'v3')) { throw 'V3 core directory is missing from candidate source.' }
+          $v3Files = @(Get-ChildItem 'v3' -Recurse -File)
+          if ($v3Files.Count -eq 0) { throw 'V3 core directory is empty.' }
+          if (-not (Test-Path 'installer\research-os.iss')) { throw 'Installer definition is missing.' }
+          $iss = Get-Content 'installer\research-os.iss' -Raw
+          if ($iss -notmatch 'Source:\s*"\.\.\\v3\\\*"') { throw 'Installer is not configured to package V3 core.' }
+          Write-Host "TARGET_SHA=$env:TARGET_SHA"
+          Write-Host "CHECKOUT_SHA=$env:CHECKOUT_SHA"
+          Write-Host "V3 files=$($v3Files.Count)"
+
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force | Out-Null
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4 pinned immutable commit
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Set up Flutter
+        uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with:
+          channel: stable
+          cache: true
+
+      - name: Python compile and API tests
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targets = @('tools/research_os_api', 'tools/research_curator')
+          if (Test-Path 'software_factory') { $targets += 'software_factory' }
+          python -m compileall -q @targets
+          if ($LASTEXITCODE -ne 0) { throw 'Python compile failed.' }
+          python -m unittest discover -s tools/research_os_api -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'API tests failed.' }
+
+      - name: Build Flutter Windows app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'src\apps\research_os_flutter'
+          $short = 'D:\w'
+          if (Test-Path $short) { Remove-Item $short -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $short | Out-Null
+          Copy-Item (Join-Path $source '*') $short -Recurse -Force
+          Set-Location $short
+          flutter create --platforms=windows --project-name=research_os_flutter .
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows project generation failed.' }
+          python -m pip install --disable-pip-version-check pillow
+          if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed.' }
+          python "$env:GITHUB_WORKSPACE\src\scripts\apply-research-os-branding.py" --app-root $short --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Windows branding failed.' }
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter pub get failed.' }
+          flutter analyze
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter analyze failed.' }
+          flutter test
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter tests failed.' }
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows build failed.' }
+          if (-not (Test-Path "$short\build\windows\x64\runner\Release\research_os_flutter.exe")) { throw 'Windows executable missing.' }
+
+      - name: Publish ServiceHost
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish tools/research_os_service/ResearchOS.ServiceHost.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o tools/research_os_service/publish
+          if ($LASTEXITCODE -ne 0) { throw 'ServiceHost publish failed.' }
+          if (-not (Test-Path 'tools\research_os_service\publish\ResearchOS.ServiceHost.exe')) { throw 'ServiceHost executable missing.' }
+
+      - name: Runtime smoke and Unified Master gate
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $data = "$env:RUNNER_TEMP\ResearchOSRuntime"
+          .\scripts\setup-research-os-windows.ps1 -Root "$env:RUNNER_TEMP\ResearchOS" -DataDir $data
+          .\scripts\start-research-os-local.ps1 -DataDir $data -Provider mock -Port 8787 -Background
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 2
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Local API did not become ready.' }
+            $master = Invoke-RestMethod 'http://127.0.0.1:8787/v2/master' -TimeoutSec 5
+            if ($master.master.contract -ne 'unified-master-orchestrator-v3-full') { throw 'Unified Master contract is missing.' }
+            if ($master.master.capacity.assistant_6x3_capacity -ne 216) { throw '6^3 capacity gate failed.' }
+            if ($master.master.capacity.max_leaf_capacity -ne 46656) { throw '6^6 capacity gate failed.' }
+          }
+          finally {
+            .\scripts\stop-research-os-local.ps1 -Port 8787 -PidFile "$data\run\research-os-api.pid" -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage complete installer payload
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $PWD 'installer\package'
+          if (Test-Path $package) { Remove-Item $package -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "$package\app" | Out-Null
+          Copy-Item 'D:\w\build\windows\x64\runner\Release\*' "$package\app" -Recurse -Force
+          New-Item -ItemType Directory -Force -Path "$package\tools\research_os_service\publish" | Out-Null
+          Copy-Item 'tools\research_os_service\publish\*' "$package\tools\research_os_service\publish" -Recurse -Force
+          New-Item -ItemType Directory -Force -Path "$package\tools\research_os_api" | Out-Null
+          Copy-Item 'tools\research_os_api\*.py' "$package\tools\research_os_api" -Force
+          New-Item -ItemType Directory -Force -Path "$package\tools\research_curator" | Out-Null
+          Copy-Item 'tools\research_curator\*' "$package\tools\research_curator" -Recurse -Force
+          New-Item -ItemType Directory -Force -Path "$package\scripts" | Out-Null
+          Copy-Item 'scripts\*research-os*.ps1' "$package\scripts" -Force
+          Copy-Item 'scripts\v2-data-preservation.ps1' "$package\scripts" -Force -ErrorAction SilentlyContinue
+          if (Test-Path 'software_factory') {
+            New-Item -ItemType Directory -Force -Path "$package\software_factory" | Out-Null
+            Copy-Item 'software_factory\*.py' "$package\software_factory" -Force
+          }
+          if (Test-Path 'apps\research_os_web') {
+            New-Item -ItemType Directory -Force -Path "$package\apps\research_os_web" | Out-Null
+            Copy-Item 'apps\research_os_web\*' "$package\apps\research_os_web" -Recurse -Force
+          }
+          if (Test-Path 'research\artifacts') {
+            New-Item -ItemType Directory -Force -Path "$package\research\artifacts" | Out-Null
+            Copy-Item 'research\artifacts\*' "$package\research\artifacts" -Recurse -Force
+          }
+          $pythonRoot = (python -c "import sys; print(sys.base_prefix)").Trim()
+          New-Item -ItemType Directory -Force -Path "$package\runtime\python" | Out-Null
+          Copy-Item "$pythonRoot\*" "$package\runtime\python" -Recurse -Force
+          if (-not (Test-Path "$package\runtime\python\python.exe")) { throw 'Bundled Python runtime missing.' }
+          $v3Target = Join-Path $package 'v3'
+          New-Item -ItemType Directory -Force -Path $v3Target | Out-Null
+          Copy-Item 'v3\*' $v3Target -Recurse -Force
+          $v3Files = @(Get-ChildItem $v3Target -Recurse -File)
+          if ($v3Files.Count -eq 0) { throw 'Staged installer V3 payload is empty.' }
+          Write-Host "Staged V3 files=$($v3Files.Count)"
+
+      - name: Generate branding and compile installer once
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/apply-research-os-branding.py --app-root apps/research_os_flutter --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Installer branding generation failed.' }
+          if (-not (Test-Path 'apps\research_os_flutter\assets\branding\research_os.ico')) { throw 'Installer icon missing.' }
+          choco install innosetup --no-progress -y
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler not found.' }
+          & $iscc 'installer\research-os.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+          $setup = Get-ChildItem 'installer\output\Research-OS-Setup-*-x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Setup EXE was not produced.' }
+          Write-Host "SETUP=$($setup.FullName)"
+
+      - name: Clean install boundary and seed V1 fixture
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Get-Service ResearchOSService -ErrorAction SilentlyContinue) {
+            .\scripts\research-os-service.ps1 -Action uninstall -DataDir "$env:ProgramData\ResearchOS" -ErrorAction SilentlyContinue
+          }
+          Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+          $root = Join-Path $env:ProgramFiles 'Research OS'
+          if (Test-Path $root) { Remove-Item $root -Recurse -Force }
+          $data = Join-Path $env:ProgramData 'ResearchOS'
+          if (Test-Path $data) { Remove-Item $data -Recurse -Force }
+          .\scripts\v2-data-preservation.ps1 -Action Seed -DataDir $data
+
+      - name: Install and full Windows E2E validation
+        working-directory: src
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem 'installer\output\Research-OS-Setup-*-x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Setup EXE missing.' }
+          $log = "$env:RUNNER_TEMP\research-os-install.log"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer failed with exit code $($p.ExitCode)." }
+          $installedRoot = Join-Path $env:ProgramFiles 'Research OS'
+          $installedV3 = Join-Path $installedRoot 'v3'
+          if (-not (Test-Path $installedV3)) { throw "Installed V3 root missing: $installedV3" }
+          $installedV3Files = @(Get-ChildItem $installedV3 -Recurse -File)
+          if ($installedV3Files.Count -eq 0) { throw 'Installed V3 payload is empty.' }
+          Write-Host "Installed V3 files=$($installedV3Files.Count)"
+          .\scripts\v2-data-preservation.ps1 -Action Verify -DataDir "$env:ProgramData\ResearchOS"
+          $ready = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $health = Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 2
+              $readiness = Invoke-RestMethod 'http://127.0.0.1:8787/v2/health/readiness' -TimeoutSec 2
+              if ($health.status -eq 'ok' -and $readiness.ready) { $ready = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) { throw 'Installed candidate did not become ready.' }
+          $listeners = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
+          if (@($listeners | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') }).Count -gt 0) { throw 'API listener is not loopback-only.' }
+          $master = Invoke-RestMethod 'http://127.0.0.1:8787/v2/master' -TimeoutSec 5
+          if ($master.master.contract -ne 'unified-master-orchestrator-v3-full') { throw 'Installed Unified Master contract is missing.' }
+          if ($master.master.capacity.assistant_6x3_capacity -ne 216) { throw 'Installed 6^3 capacity gate failed.' }
+          if ($master.master.capacity.max_leaf_capacity -ne 46656) { throw 'Installed 6^6 capacity gate failed.' }
+          if ($master.api_version -ne 'v2') { throw 'Unexpected master API version.' }
+          Write-Host 'FULL WINDOWS E2E: PASS'
+
+      - name: Upload Windows candidate artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: research-os-windows-candidate-${{ env.TARGET_SHA }}
+          path: |
+            candidate-manifest.json
+            src/installer/output/*.exe
+            ${{ runner.temp }}/research-os-install.log
+          if-no-files-found: warn
+          retention-days: 14

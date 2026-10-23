@@ -1,0 +1,248 @@
+name: Research OS Final Gate
+
+on:
+  push:
+    branches:
+      - feature/research-os-completion
+      - feature/research-os-final-integration
+      - fix/living-house-e2e
+      - coord/v3.5-flex-final-gates
+      - fix/friend-github-tool
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      skip_legacy_flutter_windows:
+        description: "Skip the legacy V3 Flutter Windows compatibility job for this manual run"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Final evidence must be allowed to finish; do not cancel an in-flight gate.
+concurrency:
+  group: research-os-final-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect-flutter-scope:
+    name: Decide whether legacy Flutter Windows validation is relevant
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_flutter: ${{ steps.scope.outputs.run_flutter }}
+    steps:
+      - name: Checkout history for exact change comparison
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Detect V3 Flutter compatibility changes
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          TARGET_SHA: ${{ github.sha }}
+          SKIP_LEGACY_FLUTTER: ${{ inputs.skip_legacy_flutter_windows }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$SKIP_LEGACY_FLUTTER" == "true" ]]; then
+              echo "run_flutter=false" >> "$GITHUB_OUTPUT"
+              echo "LEGACY_FLUTTER_WINDOWS=SKIPPED_BY_MANUAL_INPUT"
+            else
+              echo "run_flutter=true" >> "$GITHUB_OUTPUT"
+              echo "LEGACY_FLUTTER_WINDOWS=RUN_MANUAL_VALIDATION"
+            fi
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          else
+            base="$PUSH_BEFORE_SHA"
+            head="$TARGET_SHA"
+          fi
+
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            echo "run_flutter=true" >> "$GITHUB_OUTPUT"
+            echo "LEGACY_FLUTTER_WINDOWS=RUN_NO_COMPARABLE_BASELINE"
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$base" "$head")"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Eq '^(tools/aeos/(verify_pr_checks|test_verify_pr_checks)\.py$|v3/flutter_app/|packages/research_os_contracts/|\.github/actions/flutter-setup/|\.github/workflows/(research-os-final-gate|v3-candidate|v3-clean-core)\.yml$)'; then
+            echo "run_flutter=true" >> "$GITHUB_OUTPUT"
+            echo "LEGACY_FLUTTER_WINDOWS=RUN_RELEVANT_CHANGES"
+          else
+            echo "run_flutter=false" >> "$GITHUB_OUTPUT"
+            echo "LEGACY_FLUTTER_WINDOWS=SKIP_UNRELATED_CHANGES"
+          fi
+
+  python-gate:
+    name: Python build test analyze e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile Research OS
+        run: python -m compileall -q v3/research_os_v3 v3/tests
+
+      - name: Run Research OS test suite
+        env:
+          PYTHONPATH: v3
+        run: python -m unittest discover -s v3/tests -p 'test_*.py' -v
+
+      - name: Run V3.5 recovery evidence gate
+        env:
+          PYTHONPATH: v3
+        run: python -m unittest v3.tests.test_worker_recovery_evidence -v
+
+      - name: Static import smoke
+        env:
+          PYTHONPATH: v3
+        run: python -c "import research_os_v3; print('research_os_v3 import OK')"
+
+  flutter-gate:
+    name: Flutter Windows build analyze test
+    needs: detect-flutter-scope
+    if: needs.detect-flutter-scope.outputs.run_flutter == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with:
+          channel: stable
+          cache: true
+
+      - name: Validate V3 Flutter source contract
+        working-directory: v3/flutter_app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'pubspec.yaml' -PathType Leaf)) { throw 'V3 Flutter pubspec.yaml missing.' }
+          if (-not (Test-Path 'lib' -PathType Container)) { throw 'V3 Flutter lib source missing.' }
+          if (-not (Test-Path 'test' -PathType Container)) { throw 'V3 Flutter test source missing.' }
+          Write-Host 'V3_FLUTTER_SOURCE_CONTRACT=PASS'
+
+      - name: Flutter dependencies
+        working-directory: v3/flutter_app
+        run: flutter pub get
+
+      - name: Flutter analyze
+        working-directory: v3/flutter_app
+        run: flutter analyze
+
+      - name: Flutter tests
+        working-directory: v3/flutter_app
+        run: flutter test
+
+      - name: Bootstrap isolated Windows build workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter config --enable-windows-desktop
+          $source = Join-Path $env:GITHUB_WORKSPACE 'v3\flutter_app'
+          $work = Join-Path $env:RUNNER_TEMP 'research-os-v3-flutter-windows'
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          Copy-Item (Join-Path $source '*') $work -Recurse -Force
+          $packageSource = Join-Path $env:GITHUB_WORKSPACE 'packages\research_os_contracts'
+          $packageTarget = Join-Path (Split-Path (Split-Path $work -Parent) -Parent) 'packages\research_os_contracts'
+          if (-not (Test-Path (Join-Path $packageSource 'pubspec.yaml') -PathType Leaf)) { throw 'Shared Research OS contracts package is missing.' }
+          New-Item -ItemType Directory -Path $packageTarget -Force | Out-Null
+          Copy-Item "$packageSource\*" $packageTarget -Recurse -Force
+          Push-Location $work
+          try {
+            flutter create --platforms=windows --project-name=research_os_v3_flutter .
+            if ($LASTEXITCODE -ne 0) { throw 'Isolated Flutter Windows bootstrap failed.' }
+          }
+          finally { Pop-Location }
+          "V3_FLUTTER_WINDOWS_WORKSPACE=$work" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Flutter Windows build smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location $env:V3_FLUTTER_WINDOWS_WORKSPACE
+          try {
+            flutter pub get
+            if ($LASTEXITCODE -ne 0) { throw 'Flutter pub get failed in isolated Windows workspace.' }
+            flutter build windows --release
+            if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows release build failed.' }
+          }
+          finally { Pop-Location }
+          $exe = Get-ChildItem (Join-Path $env:V3_FLUTTER_WINDOWS_WORKSPACE 'build\windows') -Filter 'research_os_v3_flutter.exe' -File -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'Research OS V3 executable was not produced.' }
+          Write-Host "V3_FLUTTER_EXE=$($exe.FullName)"
+
+  source_integrity:
+    name: M.2 source integrity — required for release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact target SHA
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+      - name: Verify exact target SHA and tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$TARGET_SHA"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "CHECKED_OUT_SHA=$actual"
+          echo "TREE_SHA=$(git rev-parse 'HEAD^{tree}')"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Fetch authoritative baseline history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --filter=blob:none \
+            https://github.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH.git \
+            refs/heads/main:refs/remotes/baseline-truth/main
+      - name: Run M.2 source integrity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/m2_source_integrity_audit.py \
+            --root . \
+            --expected-sha "$TARGET_SHA" \
+            --truth-ref refs/remotes/baseline-truth/main \
+            --output m2-source-integrity-report.json
+      - name: Upload M.2 source integrity evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: m2-source-integrity-${{ env.TARGET_SHA }}
+          path: |
+            m2-source-integrity-report.json
+            current/M2_SOURCE_INTEGRITY_RECOVERY_PROTOCOL.json
+            current/M2_SOURCE_RECOVERY_LEDGER.json
+          if-no-files-found: warn
+          retention-days: 30

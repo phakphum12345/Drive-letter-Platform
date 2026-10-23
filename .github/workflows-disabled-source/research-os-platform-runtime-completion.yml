@@ -1,0 +1,28 @@
+name: Research OS Platform Runtime Completion
+on:
+  pull_request:
+    paths:
+      - 'apps/research_os_laravel/**'
+      - 'current/RESEARCH_OS_PLATFORM_*CONTRACT.json'
+      - 'tools/platform_*.py'
+      - 'tools/test_platform_*.py'
+      - 'tools/validate_research_os_platform_runtime_completion.py'
+      - '.github/workflows/research-os-platform-runtime-completion.yml'
+  workflow_dispatch:
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.12'}
+      - uses: shivammathur/setup-php@5a89ae6dd61c772780c51d7542f4374d76990a0b # pinned immutable commit
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, curl
+          coverage: none
+      - run: python tools/validate_research_os_platform_runtime_completion.py
+      - run: python tools/validate_research_os_laravel_platform.py
+      - run: composer install --no-interaction --prefer-dist --working-dir=apps/research_os_laravel
+      - run: composer test --working-dir=apps/research_os_laravel
+      - run: python -m unittest tools.test_validate_research_os_platform_runtime_completion -v

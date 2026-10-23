@@ -1,0 +1,596 @@
+{
+  "protocol_id": "M2_SOURCE_INTEGRITY_RECOVERY_PROTOCOL",
+  "schema_version": "1.0.0",
+  "status": "BLOCKED_SOURCE_UNAVAILABLE",
+  "inspected_repository": "phakphum12345/Drive-letter",
+  "evidence_snapshot": {
+    "pr_head_sha": "3666dd38655fdd73130cf94e239546aa8a299552",
+    "synthetic_merge_candidate_sha": "1b7b1de6a706740bc40bad9038773e49f5113ced",
+    "source_main_commit": "e67e2cf707c015212cb8cd3843c9f3a13ab4e80c",
+    "source_main_tree": "95f7da950818b37b1c89cb3b9ae70bbcb9cfa5ab",
+    "source_generate_commit": "311ece33bf42ba709dfdba44afc063f361623ddd",
+    "source_generate_tree": "bb4ea0cd65d4e29d23f2015663093ac4357da6ea",
+    "canonical_source_commit_checked": "565ab068d5a1540ea799b594ff031ba003e068af",
+    "matching_helper_paths": 0,
+    "note": "Historical pre-enforcement snapshot; new CI runs must record their own target, checked-out and tree SHA.",
+    "verified_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+    "verified_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab",
+    "checked_out_sha_matches_target": true,
+    "unified_gate_run": {
+      "run_id": 38667067644,
+      "decision_job_id": 116201840769,
+      "conclusion": "failure"
+    },
+    "internal_m2_job": {
+      "job_id": 116201502776,
+      "conclusion": "failure",
+      "target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    "internal_ci_lite_job": {
+      "job_id": 116201502872,
+      "conclusion": "failure",
+      "target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    }
+  },
+  "source_searches": [
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "ref": "main",
+      "tree": "95f7da950818b37b1c89cb3b9ae70bbcb9cfa5ab",
+      "result": "none of 14 helper basenames in full recursive tree"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "ref": "Generate",
+      "tree": "bb4ea0cd65d4e29d23f2015663093ac4357da6ea",
+      "result": "none of 14 helper basenames in full recursive tree"
+    },
+    {
+      "repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "ref": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "result": "exact-path fetch returned 404 for all 14 helper paths"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-execution-bridge",
+      "tree": "9c55321c1961d96632a24ba6fb853bda9213e141",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-http-boundary-13",
+      "tree": "80ae89390795665833a79ea8e5d1fe715104889e",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-production-composition-14",
+      "tree": "d3fe47d4cb60e785083309c221dcb16b00b8766d",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-provider-boundary-10",
+      "tree": "ebe227a5ad061764dcdf35733f01dbd9e2f069b0",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-runtime-admission",
+      "tree": "982c4a79efb636ebac0fcb52267c030e78e6c932",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-http-unified-runtime-12",
+      "tree": "589175db1c20e37d48f418885bafe7ec1163f994",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-consolidated-hardening-13",
+      "tree": "d92dfcc7fad090156d4cc4fd295d73d4f5fe017a",
+      "result": "no matching helper basenames"
+    },
+    {
+      "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "branch": "feat/resource-control-factory-boundary-9",
+      "tree": "a0b97981a344a43c221ba2a5c2a9ae19e00f50e8",
+      "result": "no matching helper basenames"
+    }
+  ],
+  "blocked_files": [
+    {
+      "path": "tools/add_parser_regression.py",
+      "candidate_git_blob_sha": "4e06bb13db1bd61a13e2321974814220b88123bd",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "7ae4d7ff7e97f0723cce3e14fd4a6a0ea380cb943931074d2b236b9e6a08c7a7",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/add_resource_translator.py",
+      "candidate_git_blob_sha": "47abf961eef8f3973ffb35154e2755da60463af7",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "5a4f29c2c764e6db35c33fb402c6fc23b06d5ff0b89d217849f4767dce5c31a0",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/bootstrap_resource_semantic_platform.py",
+      "candidate_git_blob_sha": "97bf37194f6a8dc8f97d080aa83af51628339e06",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "6d625a5a7cfce9b6511bc7bb1a118da30100124edbf13b51efc143f5d0aec329",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/create_change_queue.py",
+      "candidate_git_blob_sha": "5f282702bb03ef11d7184d19c80927b47f919764",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "BOM_ONLY_EMPTY_FILE",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "f1945cd6c19e56b3c1c78943ef5ec18116907a4ca1efc40a57d48ab1db7adfc5",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/create_resource_identity_allocator.py",
+      "candidate_git_blob_sha": "71395cc1e8dc1b7ce68620a7df71654cdc22cf84",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "a6d7321b821e5272e788128265417b29db4d38c0c8a9b3d9860ebcb704c23378",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/create_resource_instance.py",
+      "candidate_git_blob_sha": "a734b4cb6408eec07148c7fdf87b0d25e73c159a",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "7f6607bde2f8b630055ead3b22cec607008699a2cb20c36e8baaed207986ce47",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/create_resource_parser_tests.py",
+      "candidate_git_blob_sha": "9148055462369be2eaa672259ed3caafdf7913d2",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "a7bf1181d80540323712e5ccbdbe0c48146ad57926ade57b762ef15b2c9ac7d2",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/create_resource_variables.py",
+      "candidate_git_blob_sha": "f06eed5a8ced3e43d048d4721f90df9c32094986",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "07ddfd50e455a27036635fe92905400805ebc845bbef0a146fca1bf31f80f3dc",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/fix_resource_builder.py",
+      "candidate_git_blob_sha": "8ae3613300ca2087973c9e5d69a78530b56e79a1",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "e812ad0eed03e4abbb091d19a4da3a2c0b7270c10be3ba17647a2aa4c0e274c2",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/fix_resource_builder_validator.py",
+      "candidate_git_blob_sha": "bbe40e6e2443f6ed1e932e106a6a28144e999506",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "32d9fc5c007442e6f1a4837c220177a812b8689d455bb17aef003c07f5a09317",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/fix_resource_manifest_collision.py",
+      "candidate_git_blob_sha": "bd7d399a448e2487d94531b98b934bcb2cddfa6b",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "bc8e6454c5ffc6e6454385b591adbef95cf07b5ec66b6cc00c220a448eac06ce",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/fix_resource_parser_identity.py",
+      "candidate_git_blob_sha": "06fc7142df54116193f2f5ef912c4c7c95db8936",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "0996ec795fbbefa90a1d1ed6c361d3c73cbece24e38a8b9bf0aef99ca14abc24",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/harden_resource_drift.py",
+      "candidate_git_blob_sha": "223f07a0ac7b4cdcddd96ce666c23893cbe28f2a",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "61e60aafd4adf5518a7cb5ccbaeb4b2caf64cde29b61d8159310f7e934674541",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    },
+    {
+      "path": "tools/harden_resource_semantic_platform.py",
+      "candidate_git_blob_sha": "d07a50189a75122aedfb964b03ed2f0a44138252",
+      "status": "BLOCKED_SOURCE_UNAVAILABLE",
+      "finding": "UTF8_BOM_PYTHON_SYNTAX_ERROR",
+      "source_locator": null,
+      "source_commit": null,
+      "source_git_blob_sha": null,
+      "sha256": "084f64fef853c6a46d1693dec231fadb907204aac4f63ba9d8680e5170354997",
+      "comparison_result": "NO_AUTHORITATIVE_EXACT_PATH_SOURCE_FOUND",
+      "action": "Do not strip BOM, rewrite, or synthesize. Keep unchanged until exact source bytes are proven.",
+      "evidence_run_id": 38667067509,
+      "evidence_target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "evidence_tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+    }
+  ],
+  "source_proven_repairs": [
+    {
+      "path": ".gitignore",
+      "status": "RESTORED_FROM_VERIFIED_SOURCE_MERGED_WITH_CANDIDATE_RULES_PENDING_CI",
+      "candidate_blob_before": "250cfedc432c690de32b667029674e2cc3edb64a",
+      "source": {
+        "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+        "commit": "e67e2cf707c015212cb8cd3843c9f3a13ab4e80c",
+        "path": ".gitignore",
+        "git_blob_sha": "7c3246d8647a926224ee12a260ae3c413c7f4c2e"
+      },
+      "comparison": "Source has 374 lines/5245 characters; candidate had 55 lines/716 characters. Unique candidate-specific ignore rules retained."
+    },
+    {
+      "path": ".github/workflows/aeos-master-assurance.yml",
+      "status": "BOM_REMOVED_AFTER_LINE_COMPARISON_PENDING_CI",
+      "candidate_blob_before": "f961bb986fb7159f495c0ad849be702480edf944",
+      "source": {
+        "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+        "commit": "e67e2cf707c015212cb8cd3843c9f3a13ab4e80c",
+        "path": ".github/workflows/aeos-master-assurance.yml",
+        "git_blob_sha": "e325b43573223fed04cfeabc644f51c2f7bf671a"
+      },
+      "comparison": "After BOM removal only lines 36, 42, and 292 differ: candidate retains stronger full-SHA action pins."
+    },
+    {
+      "path": "apps/research_os_flutter/test/desktop_shell_test.dart",
+      "status": "AUTHORITATIVE_BOM_MATCH",
+      "candidate_blob_sha": "55c9ff4e76455ce20b2a3757f3364deaed38f598",
+      "source": {
+        "repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+        "commit": "e67e2cf707c015212cb8cd3843c9f3a13ab4e80c",
+        "path": "apps/research_os_flutter/test/desktop_shell_test.dart",
+        "git_blob_sha": "55c9ff4e76455ce20b2a3757f3364deaed38f598"
+      },
+      "comparison": "Exact Git blob match; preserve BOM and exempt only this exact blob."
+    }
+  ],
+  "gate_composition": {
+    "status": "PATCHED_FAIL_CLOSED_PENDING_CI",
+    "failed_source_integrity_run": 38624873654,
+    "failed_ci_lite_run": 38624873716,
+    "green_final_gate_run": 38624873437,
+    "required_change": "Unified Final Gate must directly require source-integrity and CI Lite on the same target/tree SHA.",
+    "additional_prepatch_false_green": [
+      {
+        "run_id": 38667435123,
+        "workflow": "Research OS Final Gate",
+        "result": "success",
+        "source_integrity_job_present": false
+      },
+      {
+        "run_id": 38667434829,
+        "workflow": "V3.5 Master Final Gate",
+        "result": "success",
+        "source_integrity_job_present": false
+      },
+      {
+        "run_id": 38667435038,
+        "workflow": "Research OS Unified 10x10 Exact SHA Gate",
+        "result": "success",
+        "source_integrity_job_present": false
+      }
+    ],
+    "enforcement_patch_paths": [
+      ".github/workflows/research-os-final-gate.yml",
+      ".github/workflows/final-gate.yml",
+      ".github/workflows/research-os-unified-10x10-gate.yml",
+      "tools/validate_research_os_unified_final_gate.py",
+      "tools/test_validate_research_os_unified_final_gate.py"
+    ]
+  },
+  "path_identity_review": {
+    "status": "REVIEW_REQUIRED_NOT_AUTOMATICALLY_A_DEFECT",
+    "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+    "group_count": 22,
+    "casefold_path_collision_count": 0,
+    "groups": [
+      {
+        "paths": [
+          "owner_special/research_os_friend/__init__.py",
+          "owner_special/research_os_friend/schedule_generation/__init__.py",
+          "owner_special/research_os_friend/self_learning/__init__.py",
+          "tools/copilot_chat/__init__.py",
+          "tools/forensics/__init__.py",
+          "tools/research_os_api/api_platform/__init__.py",
+          "v3/assistant_core/__init__.py",
+          "v3/research_os_v3/__init__.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/agent_runtime.py",
+          "tools/research_os_api/agent_runtime.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "apps/research_os_laravel/bootstrap/app.php",
+          "apps/research_os_laravel/config/app.php"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/brain.py",
+          "v3/research_os_v3/brain.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/evidence.py",
+          "v3/research_os_v3/evidence.py",
+          "v3/scripts/evidence.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "tools/forensics/execution.py",
+          "v3/research_os_v3/execution.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "v3/assistant_core/factory.py",
+          "v3/research_os_v3/factory.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "apps/research_os_flutter/lib/main.dart",
+          "owner_special/flutter_app/lib/main.dart",
+          "v3/flutter_app/lib/main.dart"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/memory.py",
+          "tools/research_os_api/memory.py",
+          "v3/assistant_core/memory.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/models.py",
+          "owner_special/research_os_friend/schedule_generation/models.py",
+          "owner_special/research_os_friend/self_learning/models.py",
+          "v3/assistant_core/models.py",
+          "v3/dlq/models.py",
+          "v3/research_os_v3/models.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/orchestrator.py",
+          "v3/assistant_core/orchestrator.py",
+          "v3/research_os_v3/orchestrator.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/policy.py",
+          "tools/research_os_api/policy.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "tools/research_os_api/provider_smoke.py",
+          "v3/scripts/provider_smoke.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/providers.py",
+          "tools/research_os_api/providers.py",
+          "v3/research_os_v3/providers.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/research_os_friend/service.py",
+          "v3/dlq/service.py",
+          "v3/research_os_v3/service.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/scripts/smoke.py",
+          "v3/scripts/smoke.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/flutter_app/lib/src/startup_probe.dart",
+          "v3/flutter_app/lib/src/startup_probe.dart"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/flutter_app/test/startup_probe_test.dart",
+          "v3/flutter_app/test/startup_probe_test.dart"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "owner_special/tests/test_agent_runtime.py",
+          "tools/research_os_api/test_agent_runtime.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "v3/research_os_v3/test_worker_pool.py",
+          "v3/tests/test_worker_pool.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "apps/research_os_flutter/test/widget_test.dart",
+          "owner_special/flutter_app/test/widget_test.dart",
+          "v3/flutter_app/test/widget_test.dart"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      },
+      {
+        "paths": [
+          "v3/research_os_v3/worker_pool.py",
+          "v3/worker_pool.py"
+        ],
+        "finding_code": "DUPLICATE_SOURCE_BASENAME_REVIEW",
+        "message": "duplicate source basename across paths; review import/reference resolution; not automatically a defect"
+      }
+    ],
+    "rule": "A duplicate basename is not by itself proof of a path collision. Verify imports, build manifests and workflow path filters against exact paths. Do not merge or rename files without path-level evidence."
+  },
+  "source_hash_contract": {
+    "hash_algorithm": "SHA-256",
+    "source_sha256": "null where no authoritative source bytes are available",
+    "target_sha256_source": "M.2 source integrity audit raw_sha256_by_path from the exact verified target/tree snapshot",
+    "git_blob_identity": "40-character Git blob SHA recorded separately for each candidate file"
+  }
+}

@@ -1,0 +1,53 @@
+name: Research OS GUI UX Validation
+
+"on":
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/research_os_flutter/**'
+      - 'design/**'
+      - '.github/workflows/gui-ux-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-ux-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gui-ux:
+    name: Flutter GUI UX checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate design assets
+        run: python design/validate_assets.py
+
+      - name: Set up Flutter
+        uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: apps/research_os_flutter
+        run: flutter pub get
+
+      - name: Analyze Flutter source
+        working-directory: apps/research_os_flutter
+        run: flutter analyze
+
+      - name: Record runner memory before widget tests
+        shell: bash
+        run: |
+          awk '/MemTotal|MemAvailable/ { print "RUNNER_" $1 "=" $2 " kB" }' /proc/meminfo
+
+      - name: Run Flutter widget tests with bounded worker concurrency
+        working-directory: apps/research_os_flutter
+        run: flutter test --concurrency=1

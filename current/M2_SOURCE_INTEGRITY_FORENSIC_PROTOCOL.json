@@ -1,0 +1,131 @@
+{
+  "protocol_id": "RESEARCH-OS-M2-SOURCE-INTEGRITY-FORENSIC",
+  "schema_version": "1.0.0",
+  "status": "PROPOSED_FOR_REVIEW",
+  "purpose": "Forensically detect source snapshot corruption, SHA/UI version drift, incomplete workflow inputs, and path collisions before source repair or release decisions.",
+  "authority": {
+    "audit_role": "M2_DIAGNOSTIC_ONLY",
+    "release_authority": "FINAL_GATE",
+    "may_rewrite_history": false,
+    "may_infer_missing_source": false,
+    "may_turn_unknown_into_pass": false,
+    "may_bypass_failed_gate": false
+  },
+  "source_identity": {
+    "required_fields": [
+      "repository",
+      "source_ref",
+      "source_commit_sha",
+      "source_tree_sha",
+      "target_repository",
+      "target_ref",
+      "target_commit_sha",
+      "audit_run_id"
+    ],
+    "sha_policy": "Every UI, audit, test, workflow, and evidence result must identify the exact repository and immutable commit SHA it evaluated. Results from different SHAs must not be combined as if they describe one state.",
+    "unknown_sha": "HOLD",
+    "head_changed_during_audit": "INVALIDATE_AND_RERUN"
+  },
+  "required_checks": [
+    {
+      "id": "M2-SI-001",
+      "name": "immutable-source-and-target-sha",
+      "detect": ["missing_commit_object", "unexpected_parent_history", "wrong_branch_or_ref", "stale_ui_sha", "evidence_sha_mismatch"],
+      "pass_condition": "Source and target commit/tree identities are recorded and every linked result matches its declared evaluated SHA.",
+      "failure": "HOLD"
+    },
+    {
+      "id": "M2-SI-002",
+      "name": "file-content-integrity",
+      "detect": ["unexpected_empty_file", "bom_only_file", "utf8_bom", "nul_bytes", "decode_error", "truncated_content", "unexpected_binary_text_file"],
+      "pass_condition": "Every changed or suspicious file has valid bytes and its content is consistent with trusted source evidence.",
+      "failure": "HOLD"
+    },
+    {
+      "id": "M2-SI-003",
+      "name": "canonical-path-and-collision",
+      "detect": ["case_insensitive_path_collision", "unicode_normalization_collision", "duplicate_basename_with_ambiguous_import", "path_case_changed", "unexpected_move_or_rename", "same_logical_file_at_multiple_paths"],
+      "pass_condition": "Each logical file has an unambiguous canonical path, and moves/renames are supported by source history or explicit mapping.",
+      "failure": "HOLD"
+    },
+    {
+      "id": "M2-SI-004",
+      "name": "workflow-input-completeness",
+      "detect": ["missing_required_workflow_asset", "workflow_uses_untracked_path", "missing_generator_or_manifest", "missing_contract_or_test_dependency", "path_case_mismatch_on_linux"],
+      "pass_condition": "Every workflow-referenced local file, script, contract, fixture, and generated input exists at the exact referenced path in the evaluated tree.",
+      "failure": "HOLD"
+    },
+    {
+      "id": "M2-SI-005",
+      "name": "source-provenance-and-restoration",
+      "detect": ["no_authoritative_source_revision", "unverified_reconstruction", "source_snapshot_without_history", "content_changed_without_provenance"],
+      "pass_condition": "Restored content matches a trusted source blob/revision or has independently reviewed provenance and tests.",
+      "failure": "HOLD"
+    },
+    {
+      "id": "M2-SI-006",
+      "name": "workflow-and-evidence-sha-alignment",
+      "detect": ["checkout_sha_differs_from_tested_sha", "artifact_from_other_sha", "workflow_tests_merge_ref_but_reports_head_sha", "stale_cache_or_artifact_identity"],
+      "pass_condition": "Checkout, build, test, audit, generated artifact, and evidence records agree on the exact tested tree or explicitly declare their distinct refs.",
+      "failure": "HOLD"
+    }
+  ],
+  "m2_execution": {
+    "operations": ["INDEX", "VERTICAL_SEARCH", "TRACE", "IMPACT", "RESUME"],
+    "trace_edges": ["source_commit", "source_blob", "target_path", "workflow_reference", "test_reference", "ui_version", "evidence_artifact", "final_gate"],
+    "required_evidence": [
+      "source-and-target-sha-report",
+      "changed-file-content-integrity-report",
+      "canonical-path-collision-report",
+      "workflow-input-closure-report",
+      "provenance-and-restoration-map",
+      "test-results-bound-to-sha"
+    ]
+  },
+  "repair_policy": {
+    "strip_bom_only_after_preserving_original_blob_and_confirming_content": true,
+    "restore_empty_or_truncated_files_from_trusted_blob_only": true,
+    "never_synthesize_missing_production_source_to_satisfy_ci": true,
+    "never_fix_sha_drift_by_relabeling_evidence": true,
+    "never_fix_missing_workflow_assets_by_disabling_checks": true,
+    "never_resolve_path_collisions_by_arbitrary_overwrite": true,
+    "retest_after_each_coherent_root_cause_batch": true
+  },
+  "decision_model": {
+    "PASS": "All required checks have reproducible evidence for one declared tree identity.",
+    "HOLD": "Any required evidence is missing, contradictory, or indicates source/workflow/path corruption.",
+    "FAIL": "A required invariant is demonstrably violated.",
+    "release_decision": "M2 reports findings only; FINAL_GATE remains the sole release authority."
+  },
+  "known_findings_at_creation": [
+    {
+      "finding_id": "M2-SI-CASE-001",
+      "evidence": "CI Lite run 38405062914 reports 14 Python files with U+FEFF at line 1.",
+      "status": "CONFIRMED_ON_EVALUATED_TREE",
+      "required_action": "Preserve original blobs; compare every affected file against trusted source revisions before repair."
+    },
+    {
+      "finding_id": "M2-SI-CASE-002",
+      "evidence": "tools/create_change_queue.py blob 5f282702bb03ef11d7184d19c80927b47f919764 decodes to base64 77u/, which is UTF-8 BOM only.",
+      "status": "CONFIRMED_ON_EVALUATED_TREE",
+      "required_action": "Recover from a trusted source blob or historical revision; do not replace with an empty file."
+    },
+    {
+      "finding_id": "M2-SI-CASE-003",
+      "evidence": "Baseline Truth Gate reports missing immutable commits 565ab068d5a1540ea799b594ff031ba003e068af and fab39afc15739c3dc9952f6f21db46d26f54b683 in the evaluated checkout.",
+      "status": "CONFIRMED_IN_WORKFLOW_LOG",
+      "required_action": "Determine whether the source snapshot omitted git history or the workflow failed to fetch the authoritative repository/ref; do not rewrite the truth anchors."
+    },
+    {
+      "finding_id": "M2-SI-CASE-004",
+      "evidence": "Production readiness evidence job reports missing render.yaml in the evaluated merge tree.",
+      "status": "CONFIRMED_IN_WORKFLOW_LOG",
+      "required_action": "Trace required deployment and backup/restore paths to the source tree and the target merge tree, then restore or correct references only with provenance."
+    }
+  ],
+  "versioning": {
+    "protocol_changes_require_review": true,
+    "evidence_is_immutable": true,
+    "source_sha_is_part_of_evidence_identity": true
+  }
+}

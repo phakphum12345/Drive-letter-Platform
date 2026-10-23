@@ -1,0 +1,75 @@
+name: M.2 Source Integrity Recovery Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA to audit
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m2-source-integrity-${{ inputs.target_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  source-integrity:
+    name: M.2 source integrity — exact SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+    steps:
+      - name: Checkout exact target
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Enforce exact checked-out SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid TARGET_SHA: $TARGET_SHA" >&2; exit 2; }
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$TARGET_SHA"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "CHECKED_OUT_SHA=$actual"
+          echo "TREE_SHA=$tree"
+
+      - name: Fetch authoritative baseline history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --filter=blob:none \
+            https://github.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH.git \
+            refs/heads/main:refs/remotes/baseline-truth/main
+
+      - name: Test corruption detectors
+        run: python -m unittest tools.test_m2_source_integrity_audit -v
+
+      - name: Run repository-wide M.2 source integrity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/m2_source_integrity_audit.py --root . --expected-sha "$TARGET_SHA" --truth-ref refs/remotes/baseline-truth/main --output m2-source-integrity-report.json
+
+      - name: Publish audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: m2-source-integrity-${{ github.run_id }}-${{ env.TARGET_SHA }}
+          path: m2-source-integrity-report.json
+          if-no-files-found: error
+          retention-days: 30

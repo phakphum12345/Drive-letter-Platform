@@ -1,0 +1,345 @@
+name: Owner Special Friend Complete
+
+on:
+  push:
+    branches: ['main', 'owner-special/**', 'debug/owner-installer-guard', 'fix/friend-github-tool']
+    paths:
+      - 'owner_special/**'
+      - 'v3/research_os_v3/**'
+      - '.github/workflows/owner-special-friend.yml'
+      - 'current/RESEARCH_OS_PLATFORM_*.json'
+      - 'current/PLATFORM_PROJECT_SNAPSHOT_CONTRACT.json'
+      - 'current/PLATFORM_OPERATIONALIZATION_CONTRACT.json'
+      - 'current/RESEARCH_OS_UNIFIED_FINAL_GATE.yml'
+  pull_request:
+    paths:
+      - 'owner_special/**'
+      - 'v3/research_os_v3/**'
+      - '.github/workflows/owner-special-friend.yml'
+      - 'current/RESEARCH_OS_PLATFORM_*.json'
+      - 'current/PLATFORM_PROJECT_SNAPSHOT_CONTRACT.json'
+      - 'current/PLATFORM_OPERATIONALIZATION_CONTRACT.json'
+      - 'current/RESEARCH_OS_UNIFIED_FINAL_GATE.yml'
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA to validate
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+
+jobs:
+  friend-complete:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: {python-version: '3.12'}
+      - name: Compile Owner and V3 Python sources
+        shell: bash
+        run: python -m compileall -q owner_special/research_os_friend owner_special/scripts owner_special/tests v3/research_os_v3
+      - name: Validate Owner manifest JSON
+        shell: bash
+        run: python -m json.tool owner_special/OWNER_MANIFEST.json > /dev/null
+      - name: Run owner_special Python tests
+        shell: bash
+        run: PYTHONPATH=owner_special python -m unittest discover -s owner_special/tests -p 'test_*.py' -v
+      - name: Probe Owner V3 bridge
+        shell: bash
+        run: |
+          PYTHONPATH=owner_special python - <<'PY'
+          from pathlib import Path
+          from research_os_friend.v3_bridge import V3Bridge
+          status = V3Bridge(Path.cwd()).probe()
+          print(status)
+          if not status.available:
+              raise SystemExit(f'Owner V3 bridge unavailable: {status.reason}')
+          PY
+      - name: Run Friend runtime smoke
+        shell: bash
+        run: PYTHONPATH=owner_special python owner_special/scripts/smoke.py
+
+  owner-desktop:
+    needs: friend-complete
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: {python-version: '3.12'}
+      - uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with: {channel: stable, cache: true}
+      - name: Prepare canonical Owner Windows desktop project
+        working-directory: owner_special/flutter_app
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'windows/CMakeLists.txt')) { throw 'Canonical Owner Windows project is missing: windows/CMakeLists.txt' }
+          if (-not (Test-Path 'windows/runner/Runner.rc')) { throw 'Canonical Owner Windows identity file is missing: windows/runner/Runner.rc' }
+          if (-not (Test-Path 'windows/runner/main.cpp')) { throw 'Canonical Owner Windows runner is missing: windows/runner/main.cpp' }
+          Write-Host 'OWNER_CANONICAL_WINDOWS_SOURCE=PASS'
+      - name: Prepare Flutter dependencies
+        working-directory: owner_special/flutter_app
+        shell: pwsh
+        run: flutter pub get
+      - name: Flutter analyze (blocking quality gate)
+        working-directory: owner_special/flutter_app
+        shell: pwsh
+        run: |
+          flutter analyze
+          if ($LASTEXITCODE -ne 0) { throw 'Owner Flutter analyze failed' }
+      - name: Flutter tests (blocking quality gate)
+        working-directory: owner_special/flutter_app
+        shell: pwsh
+        run: |
+          flutter test
+          if ($LASTEXITCODE -ne 0) { throw 'Owner Flutter tests failed' }
+      - name: Build Windows desktop (release gate)
+        working-directory: owner_special/flutter_app
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows release build failed' }
+          if (-not (Test-Path 'build/windows/x64/runner/Release/research_os_owner_special.exe')) { throw 'Owner Desktop EXE not found' }
+      - name: Verify Owner Desktop build identity before artifact upload
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:TARGET_SHA
+          $exe = Join-Path $env:GITHUB_WORKSPACE 'owner_special/flutter_app/build/windows/x64/runner/Release/research_os_owner_special.exe'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'owner_special/flutter_app/build/windows/x64/runner/Release/OWNER_BUILD_IDENTITY.json'
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-owner-build-identity.ps1" -ExePath $exe -ExpectedManifestPath "$env:GITHUB_WORKSPACE\owner_special\OWNER_MANIFEST.json" -EvidencePath $evidence
+          if (-not (Test-Path $evidence -PathType Leaf)) { throw 'Owner Desktop identity evidence missing' }
+          $identity = Get-Content $evidence -Raw | ConvertFrom-Json
+          if ($identity.passed -ne $true) { throw 'Owner Desktop identity gate failed' }
+          if ([string]$identity.commit -ne [string]$env:TARGET_SHA) { throw "Owner Desktop source commit mismatch: $($identity.commit) != $env:TARGET_SHA" }
+          Write-Host 'OWNER_DESKTOP_IDENTITY_GATE=PASS'
+      - name: Start Friend service and verify runtime
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\owner_special"
+          $dataRoot = "$env:RUNNER_TEMP\research-os-owner-data"
+          $auditPath = "$env:RUNNER_TEMP\owner-friend-audit.jsonl"
+          $service = Start-Process python -ArgumentList @('owner_special/scripts/run_friend_service.py','--owner-id','owner','--port','8790','--data-root',$dataRoot,'--audit-path',$auditPath,'--repository-root',$env:GITHUB_WORKSPACE) -PassThru
+          "OWNER_FRIEND_PID=$($service.Id)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "OWNER_FRIEND_AUDIT=$auditPath" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          for ($i=0; $i -lt 40; $i++) { try { $h=Invoke-RestMethod 'http://127.0.0.1:8790/owner/health' -TimeoutSec 2; if ($h.status -eq 'ok') { exit 0 } } catch {}; Start-Sleep -Milliseconds 250 }
+          throw 'Owner Friend Service did not become ready'
+      - name: Launch Owner Desktop startup E2E
+        shell: pwsh
+        run: |
+          $exe = Get-Item 'owner_special/flutter_app/build/windows/x64/runner/Release/research_os_owner_special.exe'
+          $app = Start-Process $exe.FullName -PassThru
+          try {
+            $proved=$false
+            for ($i=0; $i -lt 60; $i++) {
+              $records=@(Get-Content $env:OWNER_FRIEND_AUDIT -ErrorAction SilentlyContinue | Where-Object {$_.Trim()} | ForEach-Object {$_ | ConvertFrom-Json})
+              $h=@($records|Where-Object {$_.path -eq '/owner/health' -and [int]$_.status -eq 200}).Count -gt 0
+              $s=@($records|Where-Object {$_.path -eq '/owner/status' -and [int]$_.status -eq 200}).Count -gt 0
+              $p=@($records|Where-Object {$_.path -eq '/owner/provider' -and [int]$_.status -eq 200}).Count -gt 0
+              if ($h -and $s -and $p) {$proved=$true; break}; Start-Sleep -Milliseconds 250
+            }
+            if (-not $proved) { throw 'Owner Desktop startup E2E failed' }
+          } finally { if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue } }
+      - name: Cleanup Friend service
+        if: always()
+        shell: pwsh
+        run: if ($env:OWNER_FRIEND_PID) { Stop-Process ([int]$env:OWNER_FRIEND_PID) -Force -ErrorAction SilentlyContinue }
+      - name: Upload validated Owner desktop
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: owner-special-desktop-validated-${{ env.TARGET_SHA }}
+          path: owner_special/flutter_app/build/windows/x64/runner/Release/**
+          if-no-files-found: error
+          retention-days: 30
+
+  owner-installer-build:
+    needs: owner-desktop
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: {python-version: '3.12'}
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5 pinned immutable commit
+        with: {dotnet-version: '8.0.x'}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v4 pinned immutable commit
+        with:
+          name: owner-special-desktop-validated-${{ env.TARGET_SHA }}
+          path: owner_special/installer/desktop
+      - name: Publish Owner ServiceHost
+        shell: pwsh
+        run: |
+          dotnet publish owner_special/windows_service/ResearchOS.Owner.ServiceHost.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o owner_special/windows_service/publish
+          if ($LASTEXITCODE -ne 0) { throw 'Owner ServiceHost publish failed' }
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem owner_special/scripts -Filter '*.ps1' -File | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { $failed = $true; $errors | Format-List | Out-Host }
+          }
+          if ($failed) { throw 'Owner PowerShell syntax validation failed' }
+      - name: Stage installer
+        shell: pwsh
+        run: .\owner_special\scripts\stage-owner-installer.ps1 -FlutterReleaseDir "$env:GITHUB_WORKSPACE\owner_special\installer\desktop" -ServiceHostDir "$env:GITHUB_WORKSPACE\owner_special\windows_service\publish"
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build Owner Setup.exe
+        working-directory: owner_special/installer
+        shell: pwsh
+        run: |
+          $iscc="${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc '.\owner-special.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Owner Setup compilation failed' }
+          if (-not (Test-Path '.\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe')) { throw 'Owner Setup EXE missing' }
+      - name: Clean install validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase clean -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner clean install E2E failed' }
+      - name: Verify installed Owner release provenance after clean install
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-installed-owner-provenance.ps1" -ExpectedCommit $env:TARGET_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Owner release provenance gate failed after clean install' }
+      - name: In-place upgrade validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase upgrade -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner in-place upgrade E2E failed' }
+      - name: Verify installed Owner release provenance after upgrade
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-installed-owner-provenance.ps1" -ExpectedCommit $env:TARGET_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Owner release provenance gate failed after upgrade' }
+      - name: Uninstall and data preservation validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase uninstall -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner uninstall/data preservation E2E failed' }
+          if (-not (Test-Path 'owner_special/installer/output/owner-v1.3-validation.json' -PathType Leaf)) { throw 'Validated installer evidence missing' }
+          Write-Host 'OWNER_INSTALLER_E2E_GATE=PASS'
+      - name: Verify final packaged Owner EXE identity before setup artifact upload
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:TARGET_SHA
+          $exe = Join-Path $env:GITHUB_WORKSPACE 'owner_special/installer/package/app/research_os_owner_special.exe'
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'owner_special/installer/package/owner_special/OWNER_MANIFEST.json'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'owner_special/installer/package/app/OWNER_BUILD_IDENTITY.json'
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-owner-build-identity.ps1" -ExePath $exe -ExpectedManifestPath $manifest -EvidencePath $evidence
+          if (-not (Test-Path $evidence -PathType Leaf)) { throw 'Packaged Owner identity evidence missing' }
+          $identity = Get-Content $evidence -Raw | ConvertFrom-Json
+          if ($identity.passed -ne $true) { throw 'Packaged Owner identity gate failed' }
+          if ([string]$identity.commit -ne [string]$env:TARGET_SHA) { throw "Packaged Owner source commit mismatch: $($identity.commit) != $env:TARGET_SHA" }
+          Write-Host 'OWNER_PACKAGED_IDENTITY_GATE=PASS'
+      - name: Upload validated Owner Setup.exe and evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: owner-special-setup-validated-${{ env.TARGET_SHA }}
+          path: |
+            owner_special/installer/output/Research-OS-Owner-Special-Setup-1.3.1-x64.exe
+            owner_special/installer/output/owner-v1.3-validation.json
+          if-no-files-found: error
+          retention-days: 30
+
+  owner-installer-validation:
+    needs: owner-installer-build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v4 pinned immutable commit
+        with:
+          name: owner-special-setup-validated-${{ env.TARGET_SHA }}
+          path: owner_special/installer/output
+      - name: Clean install validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase clean -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner clean install E2E failed' }
+      - name: Verify installed Owner release provenance after clean install
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-installed-owner-provenance.ps1" -ExpectedCommit $env:TARGET_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Owner release provenance gate failed after clean install' }
+      - name: In-place upgrade validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase upgrade -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner in-place upgrade E2E failed' }
+      - name: Verify installed Owner release provenance after upgrade
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\owner_special\scripts\verify-installed-owner-provenance.ps1" -ExpectedCommit $env:TARGET_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Owner release provenance gate failed after upgrade' }
+      - name: Uninstall and data preservation validation
+        shell: pwsh
+        run: |
+          .\owner_special\scripts\validate-owner-installer.ps1 -Phase uninstall -SetupPath "$env:GITHUB_WORKSPACE\owner_special\installer\output\Research-OS-Owner-Special-Setup-1.3.1-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Owner uninstall/data preservation E2E failed' }
+      - name: Upload Owner validation evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: owner-special-validation-${{ env.TARGET_SHA }}
+          path: owner_special/installer/output/owner-v1.3-validation.json
+          if-no-files-found: error
+          retention-days: 30
+
+  owner-bundle:
+    needs: [owner-desktop, owner-installer-build, owner-installer-validation]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v4 pinned immutable commit
+        with:
+          name: owner-special-setup-validated-${{ env.TARGET_SHA }}
+          path: owner_special/dist/validated-installer
+      - name: Build Friend Complete source bundle
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:TARGET_SHA
+          python owner_special/scripts/build_bundle.py
+          if ($LASTEXITCODE -ne 0) { throw 'Owner Friend Complete bundle build failed' }
+      - name: Verify source bundle provenance
+        shell: pwsh
+        run: |
+          $result = Get-Content owner_special/dist/bundle-result.json -Raw | ConvertFrom-Json
+          if ($result.source_only -ne $true) { throw 'Owner bundle is not source-only' }
+          if ($result.source_sha -ne $env:TARGET_SHA) { throw "Owner bundle SHA mismatch: $($result.source_sha) != $env:TARGET_SHA" }
+          Write-Host 'OWNER_BUNDLE_PROVENANCE_GATE=PASS'
+      - name: Upload Owner Friend Complete bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: owner-special-friend-complete-${{ env.TARGET_SHA }}
+          path: |
+            owner_special/dist/Research-OS-Owner-Special-Friend-Complete.zip
+            owner_special/dist/BUNDLE_SHA256.txt
+            owner_special/dist/bundle-result.json
+          if-no-files-found: error
+          retention-days: 30

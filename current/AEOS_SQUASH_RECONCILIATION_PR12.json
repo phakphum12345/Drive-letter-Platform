@@ -1,0 +1,21 @@
+{
+  "schema": "aeos.squash-reconciliation.v1",
+  "pr_number": 12,
+  "base_sha": "3140abb5bb0f7d37fc1e43f0fc804fd626c79a43",
+  "head_sha": "5905e4df962089f1297ed181600142c366076429",
+  "merge_sha": "91d265f68b0a97dfbe460268cdec0fe8721f5dd5",
+  "merge_parent_sha": "62c75e8d2953d9525d1f0d94b8d8016906bfd968",
+  "divergent_paths": [],
+  "canonical_conflict_evidence": {},
+  "accepted_payload_paths": [
+    ".github/workflows/aeos-master-assurance.yml",
+    ".github/workflows/aeos-one-shot-auto-merge.yml",
+    "tools/aeos/test_verify_pr_checks.py",
+    "tools/aeos/verify_pr_checks.py"
+  ],
+  "accepted_payload_digest": "91d265f68b0a97dfbe460268cdec0fe8721f5dd5",
+  "accepted_payload_digest_algorithm": "git_commit_sha",
+  "independent_forensic_status": "PENDING",
+  "merge_authority": false,
+  "self_certification": false
+}

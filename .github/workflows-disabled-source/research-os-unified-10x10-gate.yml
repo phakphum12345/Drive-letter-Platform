@@ -1,0 +1,229 @@
+name: Research OS Unified 10x10 Exact SHA Gate
+
+on:
+  push:
+    branches: [main, compat/pr41-pr47-8790]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unified-gate:
+    name: V3 Master 8788 + 10x10 exact runtime evidence
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+    steps:
+      - name: Checkout workflow definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Checkout exact target SHA
+        shell: pwsh
+        run: |
+          $sha=$env:TARGET_SHA.Trim()
+          if($sha -notmatch '^[0-9a-fA-F]{40}$'){throw "Invalid TARGET_SHA: $sha"}
+          git fetch --no-tags --depth=1 origin $sha
+          if($LASTEXITCODE -ne 0){throw "Failed to fetch TARGET_SHA $sha"}
+          git checkout --detach FETCH_HEAD
+          if($LASTEXITCODE -ne 0){throw "Failed to checkout TARGET_SHA $sha"}
+
+      - name: Verify exact SHA
+        shell: pwsh
+        run: |
+          $actual=(git rev-parse HEAD).Trim()
+          if($actual -ne $env:TARGET_SHA){throw "Exact SHA mismatch: expected $env:TARGET_SHA got $actual"}
+          Write-Host "EXACT_SHA=$actual"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.12'}
+
+      - name: Start Main API 8787
+        shell: pwsh
+        run: |
+          $data="$env:RUNNER_TEMP\ResearchOSData"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          $python=(Get-Command python -ErrorAction Stop).Source
+          Write-Host "PYTHON_EXE=$python"
+          $env:PYTHONPATH="$PWD"
+          & $python -m unittest tools.test_research_os_api_import_boundary -v
+          if($LASTEXITCODE -ne 0){throw "Research OS API import-boundary regression failed with exit code $LASTEXITCODE"}
+          Push-Location "$PWD\\tools\\research_os_api"
+          try {
+            & $python -u -c "import render_server; print('RENDER_SERVER_IMPORT=PASS')"
+            if($LASTEXITCODE -ne 0){throw "Research OS render_server import failed with exit code $LASTEXITCODE"}
+          } finally { Pop-Location }
+          $env:PYTHONUNBUFFERED='1'
+          .\scripts\start-research-os-local.ps1 -DataDir $data -Provider mock -Port 8787 -Background
+          $pidFile=Join-Path $data 'run\\research-os-api.pid'
+          $errLog=Join-Path $data 'logs\\research-os-api.err.log'
+          $outLog=Join-Path $data 'logs\\research-os-api.out.log'
+          if(-not (Test-Path $pidFile)){throw "API PID file was not created: $pidFile"}
+          $pidText=(Get-Content $pidFile -Raw).Trim()
+          $apiPid=0
+          if(-not [int]::TryParse($pidText,[ref]$apiPid)){throw "Invalid API PID file content: $pidText"}
+          Write-Host "API_PID=$apiPid"
+          for($i=0;$i-lt 40;$i++){
+            $process=Get-Process -Id $apiPid -ErrorAction SilentlyContinue
+            if(-not $process){
+              Write-Host '--- API STDOUT ---'
+              if(Test-Path $outLog){Get-Content $outLog -Tail 120}
+              Write-Host '--- API STDERR ---'
+              if(Test-Path $errLog){Get-Content $errLog -Tail 120}
+              throw "Research OS Local API exited before readiness. PID=$apiPid"
+            }
+            try{
+              $h=Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 2
+              if($h.status -eq 'ok'){Write-Host 'PORT_8787=PASS';return}
+            }catch{}
+            Start-Sleep -Milliseconds 500
+          }
+          Write-Host '--- API STDOUT ---'
+          if(Test-Path $outLog){Get-Content $outLog -Tail 120}
+          Write-Host '--- API STDERR ---'
+          if(Test-Path $errLog){Get-Content $errLog -Tail 120}
+          throw '8787 did not become ready; captured API logs above.'
+
+      - name: Start and execute actual V3 Master 8788 + 10x10
+        shell: pwsh
+        run: |
+          $data="$env:RUNNER_TEMP\ResearchOSV3"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          $env:RESEARCH_OS_DATA_DIR=$data
+          $env:RESEARCH_OS_V3_HOST='127.0.0.1'
+          $env:RESEARCH_OS_V3_PORT='8788'
+          $env:PYTHONPATH="$PWD\v3"
+          $python=Join-Path $env:pythonLocation 'python.exe'
+          if(-not (Test-Path $python)){throw "Python executable not found: $python"}
+          $pythonInfo=& $python -c 'import sys,platform; print("PYTHON_EXE=" + sys.executable); print("PYTHON_VERSION=" + platform.python_version()); print("PYTHON_ARCH=" + platform.machine())'
+          if($LASTEXITCODE -ne 0){throw "Exact Python runtime validation failed with exit code $LASTEXITCODE"}
+          $pythonInfo | ForEach-Object {Write-Host $_}
+          $importInfo=& $python -c 'import research_os_v3.service as svc; print("V3_IMPORT=PASS"); print("V3_SERVICE=" + str(svc.__file__))'
+          if($LASTEXITCODE -ne 0){throw "V3 service import failed with exit code $LASTEXITCODE"}
+          $importInfo | ForEach-Object {Write-Host $_}
+          $out="$data\v3.out.log";$err="$data\v3.err.log"
+          $launcher="$data\start-v3-master.py"
+          @'
+          import os
+          from v3.scripts.run_service import main
+          raise SystemExit(main())
+          '@ | Set-Content $launcher -Encoding utf8
+          # Preserve the hosted runner environment. Supplying a partial -Environment map can
+          # replace the child environment and cause Windows DLL initialization failure (0xC0000142).
+          $childEnv=@{}
+          Get-ChildItem Env: | ForEach-Object { $childEnv[$_.Name]=$_.Value }
+          $childEnv['PYTHONPATH']="$PWD\v3"
+          $childEnv['RESEARCH_OS_DATA_DIR']=$data
+          $childEnv['RESEARCH_OS_V3_HOST']='127.0.0.1'
+          $childEnv['RESEARCH_OS_V3_PORT']='8788'
+          $childEnv['PYTHON_EXE']=$python
+          $p=Start-Process $python -ArgumentList @('-u','v3/scripts/run_service.py') -WorkingDirectory $PWD -Environment $childEnv -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+          $p.Id | Out-File "$env:RUNNER_TEMP\v3.pid" -Encoding ascii
+          $ready=$false
+          for($i=0;$i-lt 40;$i++){
+            if($p.HasExited){break}
+            try{$h=Invoke-RestMethod 'http://127.0.0.1:8788/health' -TimeoutSec 2;if($h.status -eq 'ok'){$ready=$true;break}}catch{}
+            Start-Sleep -Milliseconds 500
+          }
+          if(-not $ready){
+            Write-Host '--- V3 stdout ---';Get-Content $out -ErrorAction SilentlyContinue
+            Write-Host '--- V3 stderr ---';Get-Content $err -ErrorAction SilentlyContinue
+            if($p.HasExited){throw "8788 V3 Master exited with code $($p.ExitCode) before becoming ready"}
+            throw '8788 V3 Master did not become ready'
+          }
+          Write-Host 'PORT_8788_V3_MASTER=PASS'
+          if($p.HasExited){throw "8788 V3 Master exited unexpectedly after health check"}
+          $master=Invoke-RestMethod 'http://127.0.0.1:8788/v3/master?tasks=10000000000&risk=1&parallelism=1' -TimeoutSec 10
+          if($master.contract -ne 'unified-master-orchestrator-v3-full'){throw "Unexpected contract: $($master.contract)"}
+          if($master.system_maximum_scale -ne '10^10'){throw "Unexpected scale: $($master.system_maximum_scale)"}
+          if([int64]$master.system_maximum_logical_capacity -ne 10000000000){throw "Unexpected logical capacity: $($master.system_maximum_logical_capacity)"}
+          if($master.capacity_policy -ne 'lazy-bounded-execution'){throw "Unexpected policy: $($master.capacity_policy)"}
+          if(-not $master.scale){throw 'Missing scale decision'}
+          $evidence="$env:RUNNER_TEMP\v3-evidence";New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $master | ConvertTo-Json -Depth 30 | Set-Content "$evidence\MASTER_V3_EVIDENCE.json" -Encoding utf8
+          @{target_sha=$env:TARGET_SHA;endpoint='127.0.0.1:8788/v3/master';contract=$master.contract;scale=$master.scale;system_maximum_scale=$master.system_maximum_scale;system_maximum_logical_capacity=[int64]$master.system_maximum_logical_capacity;capacity_policy=$master.capacity_policy} | ConvertTo-Json | Set-Content "$evidence\UNIFIED_GATE.json" -Encoding utf8
+          Get-FileHash "$evidence\MASTER_V3_EVIDENCE.json" -Algorithm SHA256 | Format-List | Out-File "$evidence\MASTER_V3_EVIDENCE.sha256.txt"
+          Get-FileHash "$evidence\UNIFIED_GATE.json" -Algorithm SHA256 | Format-List | Out-File "$evidence\UNIFIED_GATE.sha256.txt"
+          Write-Host 'V3_MASTER_CONTRACT=PASS'
+          Write-Host "V3_MASTER_SCALE=$($master.scale)"
+          Write-Host 'V3_MASTER_10X10=PASS'
+          Write-Host "V3_MASTER_LOGICAL_CAPACITY=$($master.system_maximum_logical_capacity)"
+
+      - name: Upload V3 Master evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: v3-master-exact-evidence-${{ env.TARGET_SHA }}
+          path: ${{ runner.temp }}\v3-evidence\*
+          if-no-files-found: error
+
+      - name: Cleanup services
+        if: always()
+        shell: pwsh
+        run: |
+          .\scripts\stop-research-os-local.ps1 -Port 8787 -ErrorAction SilentlyContinue
+          if(Test-Path "$env:RUNNER_TEMP\v3.pid"){$p=(Get-Content "$env:RUNNER_TEMP\v3.pid" -ErrorAction SilentlyContinue);if($p){Stop-Process -Id ([int]$p) -Force -ErrorAction SilentlyContinue}}
+
+  source_integrity:
+    name: M.2 source integrity — required for release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+    steps:
+      - name: Checkout exact target SHA
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+      - name: Verify exact target SHA and tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$TARGET_SHA"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "CHECKED_OUT_SHA=$actual"
+          echo "TREE_SHA=$(git rev-parse 'HEAD^{tree}')"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Fetch authoritative baseline history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --filter=blob:none \
+            https://github.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH.git \
+            refs/heads/main:refs/remotes/baseline-truth/main
+      - name: Run M.2 source integrity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/m2_source_integrity_audit.py \
+            --root . \
+            --expected-sha "$TARGET_SHA" \
+            --truth-ref refs/remotes/baseline-truth/main \
+            --output m2-source-integrity-report.json
+      - name: Upload M.2 source integrity evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: m2-source-integrity-${{ env.TARGET_SHA }}
+          path: |
+            m2-source-integrity-report.json
+            current/M2_SOURCE_INTEGRITY_RECOVERY_PROTOCOL.json
+            current/M2_SOURCE_RECOVERY_LEDGER.json
+          if-no-files-found: warn
+          retention-days: 30

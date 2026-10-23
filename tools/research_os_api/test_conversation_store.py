@@ -1,0 +1,95 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import conversation_store
+
+
+class ConversationStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.previous_store = os.environ.get("RESEARCH_OS_CONVERSATION_STORE")
+        self.previous_key = os.environ.get("RESEARCH_OS_SYNC_KEY")
+        os.environ["RESEARCH_OS_CONVERSATION_STORE"] = str(
+            Path(self.tempdir.name) / "conversations.json"
+        )
+        os.environ["RESEARCH_OS_SYNC_KEY"] = "test-sync-key"
+
+    def tearDown(self):
+        if self.previous_store is None:
+            os.environ.pop("RESEARCH_OS_CONVERSATION_STORE", None)
+        else:
+            os.environ["RESEARCH_OS_CONVERSATION_STORE"] = self.previous_store
+        if self.previous_key is None:
+            os.environ.pop("RESEARCH_OS_SYNC_KEY", None)
+        else:
+            os.environ["RESEARCH_OS_SYNC_KEY"] = self.previous_key
+        self.tempdir.cleanup()
+
+    def test_sync_key_is_required(self):
+        self.assertTrue(conversation_store.sync_configured())
+        self.assertTrue(conversation_store.authorize("test-sync-key"))
+        self.assertFalse(conversation_store.authorize("wrong"))
+        self.assertFalse(conversation_store.authorize(None))
+
+    def test_session_round_trip_and_delete(self):
+        saved = conversation_store.upsert_session(
+            {
+                "id": "chat-1",
+                "title": "Research OS",
+                "updated_at": 123,
+                "messages": [
+                    {"role": "user", "text": "hello"},
+                    {"role": "assistant", "text": "hi", "memory_count": 2},
+                ],
+            }
+        )
+        self.assertEqual("chat-1", saved["id"])
+        sessions = conversation_store.list_sessions()
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("Research OS", sessions[0]["title"])
+        self.assertEqual(2, len(sessions[0]["messages"]))
+        self.assertTrue(conversation_store.delete_session("chat-1"))
+        self.assertEqual([], conversation_store.list_sessions())
+
+    def test_user_scopes_are_isolated(self):
+        conversation_store.upsert_session(
+            {"id": "alice-chat", "title": "Alice", "updated_at": 10, "messages": []},
+            user_id="alice",
+        )
+        conversation_store.upsert_session(
+            {"id": "bob-chat", "title": "Bob", "updated_at": 20, "messages": []},
+            user_id="bob",
+        )
+
+        alice = conversation_store.list_sessions("alice")
+        bob = conversation_store.list_sessions("bob")
+        self.assertEqual(["alice-chat"], [item["id"] for item in alice])
+        self.assertEqual(["bob-chat"], [item["id"] for item in bob])
+
+        self.assertTrue(conversation_store.delete_session("alice-chat", user_id="alice"))
+        self.assertEqual([], conversation_store.list_sessions("alice"))
+        self.assertEqual(["bob-chat"], [item["id"] for item in conversation_store.list_sessions("bob")])
+
+    def test_canonical_provider_identity_is_supported_as_json_scope_key(self):
+        user_id = "google:123"
+        conversation_store.upsert_session(
+            {"id": "google-chat", "title": "Google", "updated_at": 30, "messages": []},
+            user_id=user_id,
+        )
+        sessions = conversation_store.list_sessions(user_id)
+        self.assertEqual(["google-chat"], [item["id"] for item in sessions])
+        self.assertTrue(conversation_store.delete_session("google-chat", user_id=user_id))
+
+    def test_user_scope_rejects_path_traversal(self):
+        with self.assertRaises(ValueError):
+            conversation_store.list_sessions("../alice")
+        with self.assertRaises(ValueError):
+            conversation_store.upsert_session({"id": "chat"}, user_id="alice/bob")
+        with self.assertRaises(ValueError):
+            conversation_store.delete_session("chat", user_id="..")
+
+
+if __name__ == "__main__":
+    unittest.main()

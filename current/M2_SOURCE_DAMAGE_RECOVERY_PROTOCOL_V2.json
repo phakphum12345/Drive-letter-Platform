@@ -1,0 +1,209 @@
+{
+  "schema_version": "2.0.0",
+  "protocol_id": "M2-SDRP-002",
+  "title": "M.2 Source Damage, SHA Lineage, Workflow Coverage, and Path Integrity Protocol",
+  "status": "ACTIVE_NOT_CERTIFIED",
+  "target_repository": "phakphum12345/Drive-letter",
+  "target_pr": 1,
+  "branch": "import/research-os-source-2026-10-11",
+  "audit_baseline_sha": "ac785dbbe5b2b91788e28c2aef498585de6a8d44",
+  "audit_authority": "M2_AUDIT_EVIDENCE_ONLY",
+  "release_authority": "FINAL_GATE",
+  "fail_closed": true,
+  "evidence_snapshot": {
+    "current_head_ci_run_ids": {
+      "ci_lite": 38598089877,
+      "m2_source_integrity": 38598089748,
+      "baseline_truth": 38598089017,
+      "v35_master_final_gate": 38598089806
+    },
+    "current_head_results": {
+      "target_sha": "ac785dbbe5b2b91788e28c2aef498585de6a8d44",
+      "ci_lite": "FAIL",
+      "m2_source_integrity": "FAIL",
+      "baseline_truth": "PASS",
+      "v35_master_final_gate": "PASS",
+      "m2_files_scanned": 1664,
+      "workflow_and_composite_action_files_scanned": 86,
+      "external_action_references_scanned": 165,
+      "m2_errors": 17,
+      "m2_informational_findings": 1,
+      "duplicate_basename_review_warnings": 22,
+      "ci_lite_blocking_python_bom_paths": 14
+    },
+    "evidence_links": {
+      "ci_lite": "https://github.com/phakphum12345/Drive-letter/actions/runs/38598089877",
+      "m2_source_integrity": "https://github.com/phakphum12345/Drive-letter/actions/runs/38598089748",
+      "baseline_truth": "https://github.com/phakphum12345/Drive-letter/actions/runs/38598089017",
+      "v35_master_final_gate": "https://github.com/phakphum12345/Drive-letter/actions/runs/38598089806"
+    }
+  },
+  "confirmed_findings": [
+    {
+      "id": "SDR-001",
+      "kind": "python_bom_syntax_damage",
+      "count": 14,
+      "paths": [
+        "tools/add_parser_regression.py",
+        "tools/add_resource_translator.py",
+        "tools/bootstrap_resource_semantic_platform.py",
+        "tools/create_change_queue.py",
+        "tools/create_resource_identity_allocator.py",
+        "tools/create_resource_instance.py",
+        "tools/create_resource_parser_tests.py",
+        "tools/create_resource_variables.py",
+        "tools/fix_resource_builder.py",
+        "tools/fix_resource_builder_validator.py",
+        "tools/fix_resource_manifest_collision.py",
+        "tools/fix_resource_parser_identity.py",
+        "tools/harden_resource_drift.py",
+        "tools/harden_resource_semantic_platform.py"
+      ],
+      "disposition": "BLOCKED_UNTIL_AUTHORITATIVE_BLOB_RECOVERY"
+    },
+    {
+      "id": "SDR-002",
+      "kind": "bom_only_empty_source",
+      "path": "tools/create_change_queue.py",
+      "observed_base64": "77u/",
+      "disposition": "BLOCKED_SOURCE_UNAVAILABLE",
+      "rule": "Do not strip BOM and leave an empty implementation; do not guess/reconstruct from filename."
+    },
+    {
+      "id": "SDR-003",
+      "kind": "additional_unexpected_bom",
+      "paths": [
+        ".github/workflows/aeos-master-assurance.yml",
+        ".gitignore",
+        "apps/research_os_flutter/test/desktop_shell_test.dart"
+      ],
+      "disposition": "COMPARE_RAW_BYTES_WITH_AUTHORITY_BEFORE_REPAIR"
+    },
+    {
+      "id": "SDR-004",
+      "kind": "source_verified_bom_exception",
+      "path": "owner_special/installer/scripts/research-os-owner-runtime-quiesce.ps1",
+      "blob_sha": "bb43724cc9cfbbdbc709490ea72a0946e59aa3b1",
+      "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "disposition": "PRESERVE_EXACT_VERIFIED_BLOB"
+    },
+    {
+      "id": "SDR-005",
+      "kind": "source_transfer_omitted_deployment_manifests",
+      "paths": [
+        "render.yaml",
+        "render.staging.yaml"
+      ],
+      "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "source_blob_shas": {
+        "render.yaml": "1df582f3078f3e2282fd91de569cc925eab34be2",
+        "render.staging.yaml": "237879fe0b43ae6f76e4edb2750cf96bb0541e06"
+      },
+      "disposition": "RESTORE_EXACT_BLOBS_AND_VERIFY_DESTINATION_SHA"
+    },
+    {
+      "id": "SDR-006",
+      "kind": "duplicate_basename_path_shadow_review",
+      "count": 22,
+      "disposition": "TRACE_IMPORTS_BUILD_TARGETS_OWNERSHIP_AND_BLOB_SHA_BEFORE_MOVE_OR_DELETE"
+    },
+    {
+      "id": "SDR-007",
+      "kind": "ui_build_artifact_sha_lineage_incomplete",
+      "disposition": "UNKNOWN_NOT_PASS",
+      "details": "Three UI entrypoint blobs were sampled as exact source matches; full asset, lockfile, generated-output, build, package and artifact lineage remains unverified."
+    },
+    {
+      "id": "SDR-008",
+      "kind": "historical_run_head_drift",
+      "disposition": "REJECT_STALE_RUN_AS_CURRENT_EVIDENCE",
+      "details": "Earlier runs for 41f44b... checked out merge commit 35e8de3... while the PR head subsequently advanced to ac785db...; every gate result must be bound to the same immutable target SHA."
+    },
+    {
+      "id": "SDR-009",
+      "kind": "historical_nul_damage_restored",
+      "path": "versions/v1.0.0-draft/docs/00_FOUNDATION/ANEF-001_PROJECT_OVERVIEW.md",
+      "source_blob_sha": "b9a9e9c38300bb13ea9ca8afe32dc5e499af1fd0",
+      "disposition": "RESTORE_REPORTED; EXACT_HEAD_REAUDIT_REQUIRED"
+    }
+  ],
+  "recovery_rules": [
+    "Capture original blob SHA, raw SHA-256, byte length, file mode, path, target commit and evidence before changing bytes.",
+    "Restore only from an explicitly identified authoritative repository/ref/commit/blob; filename similarity is not provenance.",
+    "For every repaired file, require destination Git blob SHA equality to the authoritative blob when byte-identical restoration is intended.",
+    "Treat a BOM as corruption only when the authoritative bytes differ or the language/file contract rejects it; preserve source-verified BOM blobs.",
+    "Treat a BOM-only file as missing implementation and block it; never turn it into an empty file.",
+    "Classify missing paths separately as source-transfer omission, intentional absence, or unknown after comparing authoritative tree, base tree, target tree, and workflow expectations.",
+    "Treat same-basename files as distinct until imports, package roots, build configs and ownership prove the intended path; never auto-merge or overwrite by basename.",
+    "A successful individual gate cannot override a failing source-integrity gate or missing evidence."
+  ],
+  "required_checks": [
+    {
+      "id": "SHA-01",
+      "name": "Exact target binding",
+      "requirement": "PR head SHA, checked-out SHA, tested source SHA, audit target SHA and evidence target SHA must be identical; record merge SHA separately."
+    },
+    {
+      "id": "SHA-02",
+      "name": "UI/build/artifact lineage",
+      "requirement": "Bind UI sources, generated files, lockfiles, build toolchain, cache key, build output and artifact digest to the same target SHA."
+    },
+    {
+      "id": "WF-01",
+      "name": "Workflow path coverage",
+      "requirement": "Enumerate changed paths, workflow path filters, job if conditions and downstream reusable/composite workflows; identify files without a validating gate."
+    },
+    {
+      "id": "WF-02",
+      "name": "Required asset contract",
+      "requirement": "Compare each workflow-required file with authoritative source, PR base and PR head; restore real source assets or correct the workflow contract with evidence, never placeholders."
+    },
+    {
+      "id": "PATH-01",
+      "name": "Path and basename integrity",
+      "requirement": "Compare old/new tree paths, file modes, blob SHA, imports, package roots and UI/build targets; classify collisions as confirmed, disproven or unknown."
+    },
+    {
+      "id": "SRC-01",
+      "name": "Byte and parser integrity",
+      "requirement": "Scan tracked bytes for NUL, BOM, BOM-only, zero-byte/truncation and encoding issues; run language parser/compiler and focused tests."
+    },
+    {
+      "id": "SRC-02",
+      "name": "Authoritative recovery",
+      "requirement": "Keep files blocked if no trusted blob/branch exists; preserve a recovery ledger with original/recovered SHA and minimal diff."
+    },
+    {
+      "id": "EVD-01",
+      "name": "Independent exact-head rerun",
+      "requirement": "After repair, rerun all affected gates on one new immutable SHA and verify reports/artifacts identify that same SHA."
+    }
+  ],
+  "decision_states": [
+    "PASS",
+    "FAIL",
+    "BLOCKED_SOURCE_UNAVAILABLE",
+    "UNKNOWN",
+    "STALE_EVIDENCE"
+  ],
+  "invariants": {
+    "m2_can_authorize_release": false,
+    "final_gate_is_sole_release_authority": true,
+    "missing_evidence_is_pass": false,
+    "stale_sha_evidence_is_current": false,
+    "filename_alone_proves_identity": false,
+    "guessed_reconstruction_is_allowed": false,
+    "gate_suppression_is_allowed": false
+  },
+  "acceptance_criteria": [
+    "All 14 BOM-affected Python files are restored from trusted source blobs or remain explicitly blocked; no guessed code.",
+    "The BOM-only create_change_queue.py has a verified authoritative implementation before it is unblocked.",
+    "The three unexpected-BOM files are compared byte-for-byte with authoritative sources and repaired only where justified.",
+    "The two deployment manifests match the known authoritative blob SHAs; the other required backup/restore scripts have explicit source-tree dispositions.",
+    "All 22 basename groups are traced or remain open with path-specific evidence.",
+    "UI/build/artifact SHA lineage and workflow changed-path coverage are machine-checked.",
+    "All required gates pass on the same exact target SHA without weakening checks; otherwise disposition remains NOT_CERTIFIED."
+  ]
+}

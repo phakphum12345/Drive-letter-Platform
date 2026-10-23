@@ -1,0 +1,126 @@
+name: Browser Use Cloud Connect Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA to validate
+        required: false
+        type: string
+      connect_cloud:
+        description: Use real Browser Use Cloud instead of the local simulator
+        required: false
+        default: false
+        type: boolean
+      proxy_country_code:
+        description: Browser Use Cloud proxy country code
+        required: false
+        default: us
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-use-cloud-smoke-${{ inputs.target_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  connect-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+      RESEARCH_OS_PROVIDER: mock
+      CONNECT_CLOUD: ${{ inputs.connect_cloud }}
+      PROXY_COUNTRY_CODE: ${{ inputs.proxy_country_code || 'us' }}
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure runner paths
+        shell: bash
+        run: |
+          echo "RESEARCH_OS_DATA_DIR=$RUNNER_TEMP/ResearchOSData" >> "$GITHUB_ENV"
+          echo "RESEARCH_OS_CONVERSATION_STORE=$RUNNER_TEMP/ResearchOSData/sessions/conversations.json" >> "$GITHUB_ENV"
+
+      - name: Stage 60 preflight helper
+        run: |
+          python tools/research_os_api/stage60_preflight.py
+
+      - name: Require Browser Use Cloud secret for real-cloud mode
+        if: ${{ inputs.connect_cloud == true }}
+        shell: bash
+        env:
+          REAL_BROWSER_USE_API_KEY: ${{ secrets.BROWSER_USE_API_KEY }}
+        run: |
+          if [ -z "$REAL_BROWSER_USE_API_KEY" ]; then
+            echo "BROWSER_USE_API_KEY GitHub Secret is required when connect_cloud=true."
+            exit 1
+          fi
+
+      - name: Start Research OS API
+        env:
+          BROWSER_USE_API_BASE: ${{ inputs.connect_cloud == true && 'https://api.browser-use.com' || '' }}
+          BROWSER_USE_API_KEY: ${{ inputs.connect_cloud == true && secrets.BROWSER_USE_API_KEY || '' }}
+        run: |
+          python tools/research_os_api/server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/research-os-api.log" 2>&1 &
+          echo "RESEARCH_OS_API_PID=$!" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/health > /tmp/research-os-health.json; then
+              cat /tmp/research-os-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/research-os-api.log"
+          exit 1
+
+      - name: Verify backend status contract
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8787/health", timeout=5) as response:
+              health = json.loads(response.read().decode("utf-8"))
+
+          assert health["status"] == "ok", health
+          assert health["service"] == "research-os-api", health
+          assert health["memory"] is True, health
+          print(json.dumps(health, ensure_ascii=False))
+          PY
+
+      - name: Set up Flutter
+        uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with:
+          channel: stable
+          cache: true
+
+      - name: Verify Flutter API client contract
+        working-directory: apps/research_os_flutter
+        run: |
+          flutter pub get
+          flutter test test/research_os_api_client_test.dart test/widget_test.dart
+
+      - name: Stop Research OS API
+        if: always()
+        run: |
+          if [ -n "${RESEARCH_OS_API_PID:-}" ]; then
+            kill "$RESEARCH_OS_API_PID" 2>/dev/null || true
+          fi
+
+      - name: Upload API log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-use-cloud-smoke-api-log
+          path: ${{ runner.temp }}/research-os-api.log

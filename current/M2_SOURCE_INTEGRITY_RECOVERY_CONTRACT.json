@@ -1,0 +1,442 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_id": "M2-SIRP-001",
+  "title": "M.2 Source Integrity & Recovery Protocol",
+  "status": "ACTIVE_INVESTIGATION_NOT_CERTIFIED",
+  "target_repository": "phakphum12345/Drive-letter",
+  "target_pr": 1,
+  "incident_observed_sha": "41f44b5348ccae453a685047e3fb7a5789cd395b",
+  "release_authority": "FINAL_GATE",
+  "audit_authority": "M2_AUDIT_EVIDENCE_ONLY",
+  "fail_closed": true,
+  "known_findings": [
+    {
+      "id": "SIR-001",
+      "kind": "historical_nul_byte",
+      "path": "tools/tests/test_aeos_assurance_universe_compiler.py",
+      "status": "repair_commit_present_reverify_required",
+      "evidence_commit": "41f44b5348ccae453a685047e3fb7a5789cd395b"
+    },
+    {
+      "id": "SIR-002",
+      "kind": "utf8_bom",
+      "path": "multiple_files",
+      "count": 14,
+      "status": "reported_by_current_ci_audit",
+      "repair_policy": "compare_authoritative_bytes_before_repair"
+    },
+    {
+      "id": "SIR-003",
+      "kind": "bom_only_empty_source",
+      "path": "tools/create_change_queue.py",
+      "status": "confirmed_blocking",
+      "observed_base64": "77u/",
+      "repair_policy": "restore_from_trusted_blob_or_remain_blocked"
+    },
+    {
+      "id": "SIR-004",
+      "kind": "missing_git_history_anchor",
+      "path": "current/BASELINE_TRUTH_CONTRACT.json",
+      "status": "confirmed_source_repository_scope_mismatch_fix_pending_reverification",
+      "expected_commits": [
+        "565ab068d5a1540ea799b594ff031ba003e068af",
+        "fab39afc15739c3dc9952f6f21db46d26f54b683"
+      ],
+      "authoritative_repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "authoritative_main_ancestry_verified": true,
+      "remediation_commit": "74a86bd575b6467db68a9b2d8b490cc4cfc95311"
+    },
+    {
+      "id": "SIR-005",
+      "kind": "missing_squash_object",
+      "path": "git_object_graph",
+      "status": "object_exists_and_is_ancestor_of_authoritative_main_but_absent_from_target_graph",
+      "expected_object": "14750f63b0c1871b768874f36f6b7ee32e48cc99",
+      "authoritative_repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "authoritative_main_ancestry_verified": true
+    },
+    {
+      "id": "SIR-006",
+      "kind": "mutable_action_reference_policy",
+      "path": ".github/workflows/**",
+      "status": "historical_issue_current_tree_reaudit_required",
+      "required": "external actions pinned to full immutable commit SHA"
+    },
+    {
+      "id": "SIR-007",
+      "kind": "workflow_path_coverage",
+      "path": ".github/workflows/**",
+      "status": "coverage_risk_reaudit_required"
+    },
+    {
+      "id": "SIR-008",
+      "kind": "ui_source_sha_mismatch",
+      "path": "apps/research_os_flutter/**;apps/research_os_web/**",
+      "status": "sampled_ui_entry_blobs_match_authoritative_source_full_artifact_lineage_unverified",
+      "details": "The three sampled main.dart entry files match the authoritative production commit by exact Git blob SHA; this does not prove every UI asset or built artifact matches the same source revision."
+    },
+    {
+      "id": "SIR-009",
+      "kind": "cross_path_file_swallow_or_shadow",
+      "path": "repository_tree",
+      "status": "hypothesis_not_yet_proven"
+    },
+    {
+      "id": "SIR-010",
+      "kind": "additional_bom_damage_outside_python",
+      "path": ".github/workflows/aeos-master-assurance.yml;.gitignore;apps/research_os_flutter/test/desktop_shell_test.dart;owner_special/installer/scripts/research-os-owner-runtime-quiesce.ps1",
+      "status": "confirmed_by_m2_audit_on_522057f",
+      "count": 4,
+      "repair_policy": "compare_authoritative_bytes_before_repair"
+    },
+    {
+      "id": "SIR-011",
+      "kind": "nul_and_invalid_utf8_in_markdown_path",
+      "path": "versions/v1.0.0-draft/docs/00_FOUNDATION/ANEF-001_PROJECT_OVERVIEW.md",
+      "status": "restored_from_authoritative_blob_reaudit_pending",
+      "repair_policy": "recover_authoritative_blob_before_replacement",
+      "recovery_commit": "4837ee6ff890f26f5332c02b0f42f0b405fcbe70",
+      "authoritative_source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "authoritative_source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "authoritative_blob_sha": "b9a9e9c38300bb13ea9ca8afe32dc5e499af1fd0"
+    },
+    {
+      "id": "SIR-012",
+      "kind": "duplicate_source_basename_review",
+      "path": "repository_tree",
+      "status": "22_warning_groups_from_m2_audit",
+      "count": 22,
+      "repair_policy": "compare_git_blob_sha_import_resolution_and_expected_surface_before_any_move"
+    },
+    {
+      "id": "SIR-013",
+      "kind": "production_workflow_expected_assets_absent_from_both_base_and_head",
+      "path": "render.yaml;render.staging.yaml;scripts/backup-research-os.ps1;scripts/restore-research-os.ps1",
+      "status": "confirmed_workflow_asset_contract_mismatch",
+      "details": "The production-readiness job fails because render.yaml is absent from both base commit 43cc4f6f4ca6c5b98d7e99e1a8682ff08e18b5bb and PR head 522057f6e4622535a085d7c55b053fe280a1ddb7. This is not evidence that the PR deleted it; it indicates the imported workflow expects assets not present in either checked tree."
+    },
+    {
+      "id": "SIR-014",
+      "kind": "m2_audit_coverage_limit",
+      "path": "tools/m2_source_integrity_audit.py",
+      "status": "partially_implemented",
+      "details": "M.2 now verifies production/canonical baseline anchors against the fetched authoritative main ref and records Git blob SHA per tracked path. Workflow path-filter coverage and UI/build/artifact SHA lineage remain unimplemented; authoritative recovery is only recorded where exact source blob equality was proven."
+    },
+    {
+      "id": "SIR-015",
+      "kind": "source_verified_bom_is_not_corruption",
+      "path": "owner_special/installer/scripts/research-os-owner-runtime-quiesce.ps1",
+      "status": "authoritative_blob_match_verified",
+      "blob_sha": "bb43724cc9cfbbdbc709490ea72a0946e59aa3b1",
+      "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "repair_policy": "preserve_exact_blob; do_not_strip_bom"
+    },
+    {
+      "id": "SIR-016",
+      "kind": "corrupt_helper_source_unavailable",
+      "path": "tools/create_change_queue.py;tools/add_parser_regression.py;tools/add_resource_translator.py;tools/bootstrap_resource_semantic_platform.py;tools/create_resource_identity_allocator.py;tools/create_resource_instance.py;tools/create_resource_parser_tests.py;tools/create_resource_variables.py;tools/fix_resource_builder.py;tools/fix_resource_builder_validator.py;tools/fix_resource_manifest_collision.py;tools/fix_resource_parser_identity.py;tools/harden_resource_drift.py;tools/harden_resource_semantic_platform.py",
+      "status": "exact_paths_absent_from_authoritative_production_and_canonical_trees_reviewed",
+      "repair_policy": "remain_blocked_until_an_authoritative_branch_or_blob_is_found; do_not_reconstruct_from_filename"
+    },
+    {
+      "id": "SIR-017",
+      "kind": "target_files_with_same_basename_are_not_identical_blobs_in_sample_review",
+      "path": "apps/research_os_flutter/lib/main.dart;owner_special/flutter_app/lib/main.dart;v3/flutter_app/lib/main.dart;owner_special/research_os_friend/brain.py;v3/research_os_v3/brain.py;owner_special/research_os_friend/service.py;v3/dlq/service.py;v3/research_os_v3/service.py",
+      "status": "sampled_blob_shas_are_distinct; no evidence_of_overwrite_from_basename_alone",
+      "repair_policy": "keep_separate_until_reference_and_surface_ownership_review"
+    },
+    {
+      "id": "SIR-018",
+      "kind": "ui_entry_source_blob_lineage_sample",
+      "path": "apps/research_os_flutter/lib/main.dart;owner_special/flutter_app/lib/main.dart;v3/flutter_app/lib/main.dart",
+      "status": "all_three_sampled_blobs_exact_match",
+      "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "blob_shas": {
+        "apps/research_os_flutter/lib/main.dart": "077a1f64fc2f4572d8323870d17d9dcd93dfb13d",
+        "owner_special/flutter_app/lib/main.dart": "5aea08ec59adb7f70606901a5116dc48484f62d9",
+        "v3/flutter_app/lib/main.dart": "99379d902cc6e468dc8bec077351291c5bb74021"
+      },
+      "limit": "sampled entry files only; complete UI asset, dependency lock, build and artifact SHA lineage remains unverified"
+    },
+    {
+      "id": "SIR-019",
+      "kind": "latest_exact_head_ci_and_m2_audit",
+      "path": "repository_tree",
+      "status": "not_certified_blocking_findings_reproduced_on_a183fd6",
+      "target_sha": "a183fd6ab46f982cbe1f73dca06674ac74f0e7e6",
+      "evidence_runs": [
+        38411171672,
+        38411172443,
+        38411172505
+      ],
+      "details": "CI Lite fails its source-file audit with 14 BOM-affected Python helpers; M.2 reports 17 errors, 1 authoritative BOM info match, and 22 duplicate-basename warnings; V3.5 Master Final Gate fails because required production readiness assets are absent from both base and head.",
+      "repair_policy": "recover exact files only from authoritative Git blobs/branches; audit workflow-to-asset contract and UI/build/artifact lineage; do not weaken gates"
+    },
+    {
+      "id": "SIR-020",
+      "kind": "source_transfer_omitted_deployment_manifests",
+      "path": "render.yaml;render.staging.yaml",
+      "status": "confirmed_exact_source_blobs_exist_but_target_import_branch_omits_files",
+      "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+      "source_blob_shas": {
+        "render.yaml": "1df582f3078f3e2282fd91de569cc925eab34be2",
+        "render.staging.yaml": "237879fe0b43ae6f76e4edb2750cf96bb0541e06"
+      },
+      "target_branch": "import/research-os-source-2026-10-11",
+      "target_status": "both paths absent at inspected PR head",
+      "evidence": "Production readiness job fails first on render.yaml; both manifests are present at the authoritative source commit but missing from the imported target branch.",
+      "repair_policy": "restore exact source blobs and verify destination blob SHAs; do not add placeholders or weaken the workflow."
+    },
+    {
+      "id": "SIR-021",
+      "kind": "historical_contract_implementation_cardinality_mismatch",
+      "status": "historical_failure_observed_not_classified_as_source_corruption",
+      "source_commit": "c31e9b84976ae150fdd1586cee6b2320c04b6378",
+      "test_path": "tools/tests/test_aeos_assurance_universe_compiler.py",
+      "observed_test_result": "4 passed, 3 failed",
+      "mismatch": {
+        "contract_expected_assurance_families": 100,
+        "implementation_assurance_families": 105,
+        "extra_families": [
+          "common_mode_resistance",
+          "assurance_completeness",
+          "assurance_of_assurance",
+          "constitutional_integrity",
+          "knowledge_lifecycle_integrity"
+        ]
+      },
+      "interpretation": "The implementation and test/contract disagree on cardinality. This alone does not prove file corruption. Resolve the canonical intended count and update implementation or contract/tests together with evidence; do not delete five families solely to satisfy a hard-coded count."
+    },
+    {
+      "id": "SIR-022",
+      "kind": "historical_snapshot_binary_or_corrupt_file_suspicion",
+      "status": "historical_observation_requires_byte_and_authoritative_blob_recheck",
+      "source_commit": "c31e9b84976ae150fdd1586cee6b2320c04b6378",
+      "paths": [
+        "tools/copilot_chat/__init__.py",
+        "tools/copilot_chat/test file reported in the same snapshot review"
+      ],
+      "interpretation": "Files appeared binary/corrupted in the imported snapshot. Do not infer corruption solely from a text renderer; compare raw bytes, file mode, Git blob SHA, file history, and authoritative source before repair."
+    }
+  ],
+  "required_checks": [
+    "exact_target_checkout",
+    "historical_git_object_and_tree_lineage",
+    "raw_byte_integrity_nul_bom_empty_encoding",
+    "authoritative_file_blob_comparison",
+    "rename_move_case_collision_duplicate_basename_review",
+    "changed_file_to_workflow_coverage",
+    "ui_source_and_artifact_sha_binding",
+    "repair_diff_and_regression_tests",
+    "independent_repeat_audit",
+    "final_gate_evidence_reconciliation"
+  ],
+  "decision_states": [
+    "PASS",
+    "FAIL",
+    "BLOCKED_SOURCE_UNAVAILABLE",
+    "UNKNOWN"
+  ],
+  "invariants": {
+    "target_sha_equals_checkout_sha_equals_tested_source_sha": true,
+    "missing_evidence_is_pass": false,
+    "filename_alone_proves_file_identity": false,
+    "current_head_can_replace_historical_anchor": false,
+    "m2_can_authorize_release": false,
+    "final_gate_is_sole_release_authority": true
+  },
+  "known_bom_file_paths": [
+    ".github/workflows/aeos-master-assurance.yml",
+    ".gitignore",
+    "apps/research_os_flutter/test/desktop_shell_test.dart",
+    "owner_special/installer/scripts/research-os-owner-runtime-quiesce.ps1",
+    "tools/add_parser_regression.py",
+    "tools/add_resource_translator.py",
+    "tools/bootstrap_resource_semantic_platform.py",
+    "tools/create_change_queue.py",
+    "tools/create_resource_identity_allocator.py",
+    "tools/create_resource_instance.py",
+    "tools/create_resource_parser_tests.py",
+    "tools/create_resource_variables.py",
+    "tools/fix_resource_builder.py",
+    "tools/fix_resource_builder_validator.py",
+    "tools/fix_resource_manifest_collision.py",
+    "tools/fix_resource_parser_identity.py",
+    "tools/harden_resource_drift.py",
+    "tools/harden_resource_semantic_platform.py"
+  ],
+  "revision_history": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-13",
+      "change": "Initial evidence-backed protocol for SHA/provenance drift, damaged files, workflow coverage, UI lineage, and path collisions."
+    },
+    {
+      "version": "1.0.1",
+      "date": "2026-10-13",
+      "change": "Record exact-head M.2 findings (20 errors, 22 warnings), additional BOM/non-UTF8 damage, missing baseline anchors, workflow asset mismatch, duplicate basenames, and current audit implementation limits."
+    },
+    {
+      "version": "1.0.2",
+      "date": "2026-10-13",
+      "change": "Record ANEF-001 restoration from an authoritative source blob with exact Git blob SHA equality; require a new exact-head M.2 audit before closure."
+    },
+    {
+      "version": "1.0.3",
+      "date": "2026-10-13",
+      "change": "Trace baseline and squash anchors to authoritative source main; record source-verified PowerShell BOM blob, source-unavailable helper files, sampled distinct path blobs, and M.2 ancestry/blob-SHA implementation."
+    },
+    {
+      "version": "1.0.4",
+      "date": "2026-10-13",
+      "change": "Record exact authoritative blob matches for three UI entry points while explicitly leaving full UI/build/artifact SHA lineage unverified."
+    },
+    {
+      "version": "1.0.5",
+      "date": "2026-10-14",
+      "change": "Confirm render.yaml and render.staging.yaml were omitted by source transfer: exact source blobs exist at authoritative production commit but are absent from the imported target branch; record latest exact-head CI/M.2 status."
+    },
+    {
+      "version": "1.0.6",
+      "date": "2026-10-14",
+      "change": "Add historical M.2 evidence for the 100-vs-105 assurance-family contract mismatch and suspicious binary-rendered snapshot files, explicitly distinguishing contract disagreement from proven byte corruption."
+    }
+  ],
+  "latest_audit": {
+    "target_sha": "a183fd6ab46f982cbe1f73dca06674ac74f0e7e6",
+    "observed_at": "2026-10-13",
+    "decision": "NOT_CERTIFIED",
+    "evidence": {
+      "ci_lite": {
+        "run_id": 38411171672,
+        "conclusion": "failure",
+        "tests_run": 255,
+        "failing_tests": 1,
+        "failure": "test_candidate_repository_passes_adaptive_6x6_file_audit",
+        "blocking_python_bom_paths": 14,
+        "flutter_steps": "skipped"
+      },
+      "m2_source_integrity": {
+        "run_id": 38411172443,
+        "conclusion": "failure",
+        "exact_sha_match": true,
+        "files_scanned": 1662,
+        "workflow_and_composite_action_files_scanned": 86,
+        "external_action_references_scanned": 165,
+        "errors": 17,
+        "info": 1,
+        "warnings": 22
+      },
+      "v35_master_final_gate": {
+        "run_id": 38411172505,
+        "conclusion": "failure",
+        "failing_step": "Validate production readiness assets",
+        "missing_first_asset": "render.yaml",
+        "assets_absent_from_base_and_head": true
+      },
+      "successful_independent_gates": [
+        "Baseline Truth Gate: 38411172810",
+        "Workflow Integrity Gate: 38411172297",
+        "Research OS Unified 10x10 Exact SHA Gate: 38411172243",
+        "Research OS Final Gate: 38411172653",
+        "Research OS Unified Final Gate: 38411172939"
+      ]
+    },
+    "interpretation": {
+      "api_401_403_logs_are_not_ci_lite_failing_assertion": true,
+      "missing_assets_are_not_proven_pr_deletions": true,
+      "ui_full_artifact_lineage_verified": false,
+      "helper_source_recovery_complete": false,
+      "final_gate_authority": "FINAL_GATE"
+    }
+  },
+  "latest_recovery": {
+    "path": "versions/v1.0.0-draft/docs/00_FOUNDATION/ANEF-001_PROJECT_OVERVIEW.md",
+    "prior_corrupt_blob_sha": "1f393559390921bb5282c0a93da7cc208b10a971",
+    "restored_blob_sha": "b9a9e9c38300bb13ea9ca8afe32dc5e499af1fd0",
+    "authoritative_blob_sha": "b9a9e9c38300bb13ea9ca8afe32dc5e499af1fd0",
+    "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+    "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+    "recovery_commit": "4837ee6ff890f26f5332c02b0f42f0b405fcbe70",
+    "status": "BYTE_IDENTICAL_RESTORE_REAUDIT_PENDING",
+    "release_authority": "FINAL_GATE"
+  },
+  "latest_lineage_checks": {
+    "authoritative_repository": "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+    "production_anchor": "565ab068d5a1540ea799b594ff031ba003e068af",
+    "canonical_anchor": "fab39afc15739c3dc9952f6f21db46d26f54b683",
+    "squash_anchor": "14750f63b0c1871b768874f36f6b7ee32e48cc99",
+    "all_three_exist_in_authoritative_repository": true,
+    "all_three_are_ancestors_of_authoritative_main": true,
+    "all_three_absent_from_Drive_letter_object_graph_at_audit_time": true,
+    "baseline_workflow_fetch_and_ancestry_check_added": true,
+    "baseline_and_M2_reverification": "PENDING"
+  },
+  "ui_source_sha_sample_checks": {
+    "source_repository": "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+    "source_commit": "565ab068d5a1540ea799b594ff031ba003e068af",
+    "checks": [
+      {
+        "path": "apps/research_os_flutter/lib/main.dart",
+        "target_blob_sha": "077a1f64fc2f4572d8323870d17d9dcd93dfb13d",
+        "source_blob_sha": "077a1f64fc2f4572d8323870d17d9dcd93dfb13d",
+        "equal": true
+      },
+      {
+        "path": "owner_special/flutter_app/lib/main.dart",
+        "target_blob_sha": "5aea08ec59adb7f70606901a5116dc48484f62d9",
+        "source_blob_sha": "5aea08ec59adb7f70606901a5116dc48484f62d9",
+        "equal": true
+      },
+      {
+        "path": "v3/flutter_app/lib/main.dart",
+        "target_blob_sha": "99379d902cc6e468dc8bec077351291c5bb74021",
+        "source_blob_sha": "99379d902cc6e468dc8bec077351291c5bb74021",
+        "equal": true
+      }
+    ],
+    "status": "SAMPLED_ONLY_NOT_FULL_UI_OR_ARTIFACT_CERTIFICATION"
+  },
+  "latest_followup_audit": {
+    "target_sha": "e5f9317869430a30c5f258a18d9652238935ae3f",
+    "observed_at": "2026-10-14",
+    "decision": "NOT_CERTIFIED",
+    "evidence": {
+      "ci_lite": {
+        "run_id": 38422967217,
+        "conclusion": "failure",
+        "failure": "test_candidate_repository_passes_adaptive_6x6_file_audit",
+        "blocking_python_bom_paths": 14
+      },
+      "m2_source_integrity": {
+        "run_id": 38422967510,
+        "conclusion": "failure",
+        "target_sha_match": true,
+        "duplicate_basename_warning_groups": 22,
+        "bom_only_file": "tools/create_change_queue.py"
+      },
+      "baseline_truth": {
+        "run_id": 38422967410,
+        "conclusion": "success"
+      },
+      "production_readiness": {
+        "run_id": 38422967420,
+        "conclusion": "failure",
+        "failing_step": "Validate production readiness assets",
+        "missing_first_asset": "render.yaml"
+      }
+    },
+    "confirmed_root_causes": [
+      "The import branch omits two deployment manifests that exist in the authoritative source commit.",
+      "Fourteen Python helper files still fail the syntax audit due to UTF-8 BOM; tools/create_change_queue.py is BOM-only.",
+      "The 22 duplicate-basename groups remain review warnings, not proof of overwritten files."
+    ],
+    "unverified": [
+      "Complete UI/build/package artifact SHA lineage",
+      "Whether every duplicate-basename reference resolves to the intended implementation"
+    ]
+  }
+}

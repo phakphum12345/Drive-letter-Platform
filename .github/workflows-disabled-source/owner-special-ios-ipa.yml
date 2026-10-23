@@ -1,0 +1,40 @@
+name: Owner Special iOS Reconciliation Guard
+
+# Owner Special has no separate iOS product surface.
+# The canonical iOS product is apps/research_os_flutter and is validated by
+# .github/workflows/research-os-ios-ipa.yml.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'owner_special/**'
+      - 'apps/research_os_flutter/**'
+      - '.github/workflows/owner-special-ios-ipa.yml'
+      - 'current/RESEARCH_OS_PLATFORM_*.json'
+      - 'current/PLATFORM_PROJECT_SNAPSHOT_CONTRACT.json'
+      - 'current/PLATFORM_OPERATIONALIZATION_CONTRACT.json'
+      - 'current/RESEARCH_OS_UNIFIED_FINAL_GATE.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile-owner-special-ios:
+    name: Reconcile Owner Special iOS boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validate single canonical iOS surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d apps/research_os_flutter
+          test -f .github/workflows/research-os-ios-ipa.yml
+          legacy_ios="owner_special/flutter_app/ios"
+          test ! -d "$legacy_ios"
+          canonical_workflow=".github/workflows/research-os-ios-ipa.yml"
+          grep -q "apps/research_os_flutter" "$canonical_workflow"
+          echo "OWNER_SPECIAL_IOS_RECONCILIATION=PASS"

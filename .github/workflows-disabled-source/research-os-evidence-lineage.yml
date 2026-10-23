@@ -1,0 +1,503 @@
+name: Research OS Evidence Lineage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - current/AEOS_SQUASH_RECONCILIATION_PR12.json
+      - .github/workflows/research-os-evidence-lineage.yml
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to reconcile
+        required: true
+        type: string
+      base_sha:
+        description: Original PR base commit SHA
+        required: true
+        type: string
+      head_sha:
+        description: PR head SHA
+        required: true
+        type: string
+      merge_sha:
+        description: Merge commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  reconcile:
+    name: Canonical Evidence / 111 → 115 → 116
+    runs-on: ubuntu-latest
+    env:
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.event.repository.name }}
+      EVENT_NAME: ${{ github.event_name }}
+      PR_NUMBER: ${{ inputs.pr_number || '' }}
+      BASE_SHA: ${{ inputs.base_sha || '' }}
+      HEAD_SHA: ${{ inputs.head_sha || '' }}
+      MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
+      RECONCILIATION_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+      RECONCILIATION_REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Resolve current merged PR or explicit reconciliation manifest
+        id: resolve
+        if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, json, os, subprocess
+          from pathlib import Path
+          owner=os.environ['OWNER']; repo=os.environ['REPO']; merge=os.environ['MERGE_SHA']; token=os.environ['GH_TOKEN']
+          def gh(path):
+              return json.loads(subprocess.check_output([
+                  'curl', '-fsSL',
+                  '-H', f'Authorization: Bearer {token}',
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28',
+                  f'https://api.github.com{path}'
+              ], text=True))
+
+          if os.environ['EVENT_NAME'] == 'pull_request':
+              review_pr_number = os.environ['RECONCILIATION_PR_NUMBER']
+              review_head = os.environ['RECONCILIATION_REVIEW_HEAD_SHA']
+              review_pr = gh(f'/repos/{owner}/{repo}/pulls/{review_pr_number}')
+              changed_files = gh(f'/repos/{owner}/{repo}/pulls/{review_pr_number}/files?per_page=100')
+              manifest_path = 'current/AEOS_SQUASH_RECONCILIATION_PR12.json'
+              if not any(item.get('filename') == manifest_path for item in changed_files):
+                  print(
+                      f'PR #{review_pr_number} does not change {manifest_path}; '
+                      'target-specific Evidence Lineage is not applicable to this pull request.'
+                  )
+                  with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                      fh.write('applicable=false\n')
+                  raise SystemExit(0)
+              if review_pr.get('head', {}).get('sha') != review_head:
+                  raise SystemExit('Reconciliation review PR HEAD changed during manifest resolution')
+              contents = gh(f'/repos/{owner}/{repo}/contents/current/AEOS_SQUASH_RECONCILIATION_PR12.json?ref={review_head}')
+              manifest = json.loads(base64.b64decode(contents.get('content', '')).decode('utf-8'))
+              target_number = str(manifest.get('pr_number', ''))
+              if manifest.get('schema') != 'aeos.squash-reconciliation.v1' or not target_number:
+                  raise SystemExit('Reconciliation manifest schema or target PR number is invalid')
+              target_pr = gh(f'/repos/{owner}/{repo}/pulls/{target_number}')
+              if (manifest.get('base_sha') != target_pr.get('base', {}).get('sha')
+                  or manifest.get('head_sha') != target_pr.get('head', {}).get('sha')
+                  or manifest.get('merge_sha') != target_pr.get('merge_commit_sha')
+                  or not target_pr.get('merged')):
+                  raise SystemExit('Reconciliation manifest identity does not match the immutable target PR metadata')
+              with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as fh:
+                  fh.write(f"PR_NUMBER={target_number}\n")
+                  fh.write(f"BASE_SHA={manifest['base_sha']}\n")
+                  fh.write(f"HEAD_SHA={manifest['head_sha']}\n")
+                  fh.write(f"MERGE_SHA={manifest['merge_sha']}\n")
+                  fh.write(f"RECONCILIATION_REVIEW_HEAD_SHA={review_head}\n")
+                  fh.write(f"RECONCILIATION_PR_NUMBER={review_pr_number}\n")
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                  fh.write('applicable=true\n')
+              raise SystemExit(0)
+
+          prs = gh(f'/repos/{owner}/{repo}/commits/{merge}/pulls')
+          candidates = [p for p in prs if p.get('merged_at') and p.get('merge_commit_sha') == merge]
+          if len(candidates) != 1:
+              print(f'No applicable merged PR for main push {merge}: found {len(candidates)} candidates; Evidence Lineage is not applicable.')
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                  fh.write('applicable=false\n')
+              raise SystemExit(0)
+
+          pr = gh(f"/repos/{owner}/{repo}/pulls/{candidates[0]['number']}")
+
+          # This workflow reconciles the PR recorded in the canonical manifest only.
+          # A normal unrelated main merge must not be interpreted as PR #12 lineage.
+          manifest_response = gh(
+              f'/repos/{owner}/{repo}/contents/current/AEOS_SQUASH_RECONCILIATION_PR12.json?ref={merge}'
+          )
+          manifest = json.loads(
+              base64.b64decode(manifest_response.get('content', '')).decode('utf-8')
+          )
+          if manifest.get('schema') != 'aeos.squash-reconciliation.v1':
+              raise SystemExit('Canonical squash-reconciliation manifest schema is invalid')
+          target_number = str(manifest.get('pr_number', ''))
+          if not target_number:
+              raise SystemExit('Canonical squash-reconciliation manifest has no target PR number')
+          if str(pr.get('number', '')) != target_number:
+              print(
+                  f"PR #{pr.get('number')} is not the manifest target PR #{target_number}; "
+                  'Evidence Lineage is not applicable to this main push.'
+              )
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                  fh.write('applicable=false\n')
+              raise SystemExit(0)
+
+          base = pr.get('base', {}).get('sha', '')
+          head = pr.get('head', {}).get('sha', '')
+          merge_from_pr = pr.get('merge_commit_sha', '')
+          if not base or not head or merge_from_pr != merge:
+              raise SystemExit('Resolved PR metadata is incomplete or does not match the pushed merge commit')
+
+          Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8').write(
+              f"PR_NUMBER={pr['number']}\n"
+              f"BASE_SHA={base}\n"
+              f"HEAD_SHA={head}\n"
+              f"MERGE_SHA={merge}\n"
+          )
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write('applicable=true\n')
+          PY
+      - name: Validate explicit reconciliation inputs
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            steps.resolve.outputs.applicable == 'true'
+          }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            test -n "${PR_NUMBER}" || { echo 'PR_NUMBER is required'; exit 1; }
+            test -n "${BASE_SHA}" || { echo 'BASE_SHA is required'; exit 1; }
+            test -n "${HEAD_SHA}" || { echo 'HEAD_SHA is required'; exit 1; }
+            test -n "${MERGE_SHA}" || { echo 'MERGE_SHA is required'; exit 1; }
+          fi
+      - name: Wait for exact PR-head CI to become terminal
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            steps.resolve.outputs.applicable == 'true'
+          }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess, time
+
+          owner = os.environ['OWNER']
+          repo = os.environ['REPO']
+          pr = os.environ['PR_NUMBER']
+          expected_head = os.environ['HEAD_SHA']
+          token = os.environ['GH_TOKEN']
+          max_polls = 60
+          poll_seconds = 15
+          success_states = {'success', 'neutral', 'skipped'}
+
+          def gh(path):
+              return json.loads(subprocess.check_output([
+                  'curl', '-fsSL',
+                  '-H', f'Authorization: Bearer {token}',
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28',
+                  f'https://api.github.com{path}',
+              ], text=True))
+
+          for attempt in range(1, max_polls + 1):
+              pr_data = gh(f'/repos/{owner}/{repo}/pulls/{pr}')
+              actual_head = pr_data.get('head', {}).get('sha', '')
+              if actual_head != expected_head:
+                  raise SystemExit(
+                      f'PR HEAD changed during post-merge reconciliation: expected {expected_head}, got {actual_head}'
+                  )
+
+              checks = gh(f'/repos/{owner}/{repo}/commits/{expected_head}/check-runs?per_page=100')
+              latest = {}
+              for check in checks.get('check_runs', []):
+                  key = (str(check.get('name') or ''), str((check.get('app') or {}).get('id') or ''))
+                  current_id = int(check.get('id') or 0)
+                  previous = latest.get(key)
+                  if previous is None or current_id > int(previous.get('id') or 0):
+                      latest[key] = check
+
+              external = list(latest.values())
+              pending = [c for c in external if c.get('status') != 'completed']
+              failed = [
+                  c for c in external
+                  if c.get('status') == 'completed'
+                  and c.get('conclusion') not in success_states
+              ]
+
+              print(json.dumps({
+                  'poll': attempt,
+                  'head_sha': expected_head,
+                  'check_count': len(external),
+                  'pending_count': len(pending),
+                  'failed_count': len(failed),
+                  'pending_checks': [
+                      {'name': c.get('name'), 'status': c.get('status')}
+                      for c in pending
+                  ],
+                  'failed_checks': [
+                      {'name': c.get('name'), 'conclusion': c.get('conclusion')}
+                      for c in failed
+                  ],
+              }, indent=2, sort_keys=True))
+
+              if not external:
+                  if attempt == max_polls:
+                      raise SystemExit('no PR-head CI check-runs reported before verifier timeout')
+              elif failed:
+                  raise SystemExit('one or more latest PR-head CI check-runs failed')
+              elif not pending:
+                  print('PR_HEAD_CI=TERMINAL_GREEN')
+                  break
+
+              if attempt == max_polls:
+                  raise SystemExit('PR-head CI remained pending until verifier timeout')
+              time.sleep(poll_seconds)
+          PY
+      - name: Wait for exact reconciliation-head independent forensic run
+        if: ${{ github.event_name == 'pull_request' && steps.resolve.outputs.applicable == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess, time
+          owner=os.environ['OWNER']; repo=os.environ['REPO']
+          expected=os.environ['RECONCILIATION_REVIEW_HEAD_SHA']
+          token=os.environ['GH_TOKEN']
+          for attempt in range(1, 61):
+              payload=json.loads(subprocess.check_output([
+                  'curl','-fsSL',
+                  '-H',f'Authorization: Bearer {token}',
+                  '-H','Accept: application/vnd.github+json',
+                  '-H','X-GitHub-Api-Version: 2022-11-28',
+                  f'https://api.github.com/repos/{owner}/{repo}/actions/runs?head_sha={expected}&per_page=100'
+              ], text=True))
+              matches=[
+                  run for run in payload.get('workflow_runs', [])
+                  if run.get('name') == 'AEOS Independent Forensic — Squash Reconciliation'
+                  and run.get('head_sha') == expected
+              ]
+              if matches:
+                  run=max(matches, key=lambda item: int(item.get('id') or 0))
+                  print(json.dumps({
+                      'attempt':attempt,'head_sha':expected,'run_id':run.get('id'),
+                      'status':run.get('status'),'conclusion':run.get('conclusion')
+                  }, sort_keys=True))
+                  if run.get('status') == 'completed':
+                      if run.get('conclusion') == 'success':
+                          print('INDEPENDENT_FORENSIC=VERIFIED_ON_EXACT_REVIEW_HEAD')
+                          break
+                      raise SystemExit(f"Independent forensic run failed: {run.get('conclusion')}")
+              if attempt == 60:
+                  raise SystemExit('Independent forensic run did not become successful before timeout')
+              time.sleep(10)
+          PY
+      - name: Checkout merge target
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            steps.resolve.outputs.applicable == 'true'
+          }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.MERGE_SHA }}
+          fetch-depth: 0
+
+      - name: Test lineage classifier
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            steps.resolve.outputs.applicable == 'true'
+          }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tools/aeos -p 'test_evidence_lineage.py' -v
+
+      - name: Reconcile commit lineage and CI evidence
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            steps.resolve.outputs.applicable == 'true'
+          }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/lineage
+          python - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          sys.path.insert(0, 'tools/aeos')
+          from evidence_lineage import classify_lineage
+
+          owner = os.environ['OWNER']
+          repo = os.environ['REPO']
+          pr = os.environ['PR_NUMBER']
+          base = os.environ['BASE_SHA']
+          head = os.environ['HEAD_SHA']
+          merge = os.environ['MERGE_SHA']
+          token = os.environ['GH_TOKEN']
+          run_id = os.environ['GITHUB_RUN_ID']
+
+          def gh(path):
+              return json.loads(subprocess.check_output([
+                  'curl','-fsSL',
+                  '-H', f'Authorization: Bearer {token}',
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28',
+                  f'https://api.github.com{path}'
+              ], text=True))
+
+          def is_ancestor(ancestor, descendant):
+              return subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, descendant], check=False).returncode == 0
+
+          pr_data = gh(f'/repos/{owner}/{repo}/pulls/{pr}')
+          head_data = gh(f'/repos/{owner}/{repo}/commits/{head}')
+          merge_data = gh(f'/repos/{owner}/{repo}/commits/{merge}')
+          status = gh(f'/repos/{owner}/{repo}/commits/{head}/status')
+          checks = gh(f'/repos/{owner}/{repo}/commits/{head}/check-runs?per_page=100')
+          review_head = os.environ.get('RECONCILIATION_REVIEW_HEAD_SHA') or head
+          runs = gh(f'/repos/{owner}/{repo}/actions/runs?head_sha={review_head}&per_page=100')
+          current_run = gh(f'/repos/{owner}/{repo}/actions/runs/{run_id}')
+          run_started_at = current_run.get('run_started_at', '')
+          if not run_started_at:
+              raise SystemExit(f'Current Actions run {run_id} has no run_started_at in the Actions API')
+
+          parents = [p['sha'] for p in merge_data.get('parents', [])]
+          merge_parent_sha = parents[0] if len(parents) == 1 else None
+          pr_head_sha = pr_data.get('head', {}).get('sha', '')
+          pr_merge_sha = pr_data.get('merge_commit_sha', '')
+          head_tree_sha = head_data.get('commit', {}).get('tree', {}).get('sha')
+          merge_tree_sha = merge_data.get('commit', {}).get('tree', {}).get('sha')
+
+          head_matches_pr = bool(pr_head_sha) and (pr_head_sha == head or pr_head_sha.startswith(head))
+          merge_matches_pr = bool(pr_merge_sha) and (pr_merge_sha == merge or pr_merge_sha.startswith(merge))
+          base_matches_merge_parent = any(parent == base or parent.startswith(base) for parent in parents)
+          original_base_is_ancestor_of_merge_parent = bool(merge_parent_sha and is_ancestor(base, merge_parent_sha))
+          direct_parent_lineage = head_matches_pr and merge_matches_pr and head_data.get('sha') in parents
+
+          workflow_runs = []
+          for r in runs.get('workflow_runs', []):
+              workflow_runs.append({
+                  'id': r['id'], 'name': r['name'], 'status': r['status'],
+                  'conclusion': r['conclusion'], 'head_sha': r['head_sha'],
+                  'event': r['event'], 'url': r['html_url'],
+              })
+
+          independent_reconciliation_runs = [
+              r for r in workflow_runs
+              if r['name'] == 'AEOS Independent Forensic — Squash Reconciliation'
+              and r['head_sha'] == review_head
+              and r['status'] == 'completed'
+              and r['conclusion'] == 'success'
+          ]
+          reconciliation_contract_present = Path('current/AEOS_SQUASH_RECONCILIATION_CONTRACT.json').is_file()
+          review_pr_number = os.environ.get('RECONCILIATION_PR_NUMBER') or ''
+          review_pr_data = gh(f'/repos/{owner}/{repo}/pulls/{review_pr_number}') if review_pr_number else pr_data
+          pr_body = review_pr_data.get('body') or ''
+          reconciliation_declared = (
+              'aeos.squash-reconciliation.v1' in pr_body
+              and 'squash_reconciliation' in pr_body
+          )
+          reconciliation_verified = bool(reconciliation_contract_present and reconciliation_declared and independent_reconciliation_runs)
+
+          lineage_mode, lineage_ok = classify_lineage(
+              pr_merged=bool(pr_data.get('merged')),
+              head_matches_pr=head_matches_pr,
+              merge_matches_pr=merge_matches_pr,
+              parents=parents,
+              head_sha=head_data.get('sha', ''),
+              original_base_sha=base,
+              merge_parent_sha=merge_parent_sha,
+              original_base_is_ancestor_of_merge_parent=original_base_is_ancestor_of_merge_parent,
+              head_tree_sha=head_tree_sha,
+              merge_tree_sha=merge_tree_sha,
+              reconciliation_verified=reconciliation_verified,
+          )
+
+          passed = [c for c in checks.get('check_runs', []) if c.get('conclusion') == 'success']
+          failed = [c for c in checks.get('check_runs', []) if c.get('conclusion') not in (None, 'success', 'neutral', 'skipped')]
+          squash_lineage = lineage_mode in {'SQUASH_EQUIVALENT', 'SQUASH_RECONCILIATION'}
+
+          evidence = {
+              'schema': 'research-os.canonical-evidence.v2',
+              'plan': '#111 -> existing-compatible-tools -> canonical-evidence -> #115 -> #116 -> FINAL -> LOCK',
+              'stage': '#111',
+              'status': 'GREEN' if lineage_ok else 'GAP',
+              'base_sha': base,
+              'original_pr_base_sha': base,
+              'merge_parent_sha': merge_parent_sha,
+              'merge_target_sha': merge_parent_sha,
+              'pr_number': int(pr),
+              'head_sha': head,
+              'merge_sha': merge,
+              'merge_parents': parents,
+              'head_matches_pr': head_matches_pr,
+              'merge_matches_pr': merge_matches_pr,
+              'head_is_merge_parent': head_data.get('sha') in parents,
+              'base_matches_merge_parent': base_matches_merge_parent,
+              'original_base_is_ancestor_of_merge_parent': original_base_is_ancestor_of_merge_parent,
+              'head_tree_sha': head_tree_sha,
+              'merge_tree_sha': merge_tree_sha,
+              'direct_parent_lineage': direct_parent_lineage,
+              'squash_lineage': squash_lineage,
+              'squash_equivalent': lineage_mode == 'SQUASH_EQUIVALENT',
+              'squash_reconciliation': lineage_mode == 'SQUASH_RECONCILIATION',
+              'lineage_mode': lineage_mode,
+              'reconciliation_verified': reconciliation_verified,
+              'reconciliation_contract_present': reconciliation_contract_present,
+              'reconciliation_declared': reconciliation_declared,
+              'independent_reconciliation_runs': independent_reconciliation_runs,
+              'pr_merged': bool(pr_data.get('merged')),
+              'head_commit_status': status.get('state'),
+              'check_run_count': len(checks.get('check_runs', [])),
+              'successful_check_runs': len(passed),
+              'failed_check_runs': len(failed),
+              'workflow_runs_for_head': workflow_runs,
+              'workflow_run_count': len(workflow_runs),
+              'traceability_gap': None if lineage_ok else 'PR head/merge lineage could not be fully reconciled',
+              'next_stage': '#115' if lineage_ok else '#111',
+              'generated_by': 'research-os-evidence-lineage',
+              'generated_at': run_started_at,
+          }
+
+          Path('evidence/lineage/canonical-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(evidence, indent=2))
+          if not lineage_ok:
+              raise SystemExit('Evidence lineage GAP: keep #111 open; do not advance to FINAL')
+          PY
+      - name: Publish evidence to job summary
+        if: >-
+          ${{
+            always() &&
+            (
+              github.event_name == 'workflow_dispatch' ||
+              steps.resolve.outputs.applicable == 'true'
+            )
+          }}
+        shell: bash
+        run: |
+          if [ -f evidence/lineage/canonical-evidence.json ]; then
+            echo '## Canonical Evidence — #111' >> "$GITHUB_STEP_SUMMARY"
+            cat evidence/lineage/canonical-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload canonical evidence
+        if: >-
+          ${{
+            always() &&
+            (
+              github.event_name == 'workflow_dispatch' ||
+              steps.resolve.outputs.applicable == 'true'
+            )
+          }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: canonical-evidence-lineage-${{ env.HEAD_SHA }}
+          path: evidence/lineage/canonical-evidence.json
+          if-no-files-found: error
+          retention-days: 90

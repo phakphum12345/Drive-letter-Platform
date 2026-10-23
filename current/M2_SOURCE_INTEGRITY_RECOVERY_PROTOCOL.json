@@ -1,0 +1,313 @@
+{
+  "protocol_id": "M2_SOURCE_INTEGRITY_RECOVERY_PROTOCOL",
+  "schema_version": "1.0.0",
+  "status": "BLOCKED_SOURCE_UNAVAILABLE",
+  "intent": "Recover corrupted or missing repository files only from an authoritative, independently verifiable source; preserve file identity and bind every validation result to one immutable candidate SHA.",
+  "non_goals": [
+    "Do not synthesize replacement source code when authoritative content is unavailable.",
+    "Do not strip corruption markers and call the result recovered without source comparison.",
+    "Do not weaken, skip, or relabel a failing quality gate as passing.",
+    "Do not treat a PR merge SHA, head SHA, production anchor SHA, or UI-reported SHA as interchangeable."
+  ],
+  "source_authority_rules": [
+    "Prefer an exact blob at a recorded commit in the canonical source repository.",
+    "Accept a recovered-branch or forensic archive only when repository identity, commit or archive provenance, exact path, and content hash are independently recorded.",
+    "Compare Git blob SHA and a cryptographic content hash before restoring; retain the original source locator and evidence.",
+    "If the source repository, commit, path, or blob cannot be retrieved and verified, assign BLOCKED_SOURCE_UNAVAILABLE and leave the candidate file unchanged."
+  ],
+  "path_identity_rules": [
+    "Match exact repository-relative paths; never substitute a same-named file from another directory.",
+    "Record rename or move evidence explicitly; a path collision is not proof of equivalence.",
+    "Reject empty, BOM-only, truncated, invalid-encoding, or syntax-invalid content as recovered source.",
+    "Treat UTF-8 BOM removal as normalization only after the underlying content has been proven identical to the authoritative source."
+  ],
+  "sha_binding_rules": [
+    "For pull_request workflows, github.sha is the synthetic merge-candidate SHA; for workflow_dispatch, use inputs.target_sha when explicitly provided, otherwise github.sha.",
+    "Record PR head SHA and synthetic merge-candidate SHA separately; do not treat the workflow-run head_sha metadata as proof of the commit actually checked out.",
+    "Every gate must assert and log TARGET_SHA == git rev-parse HEAD and report the tested tree SHA.",
+    "M.2, CI Lite, Unified 10x10, Unified Final Gate, and Completion Validation must use the same target selection expression inputs.target_sha || github.sha.",
+    "A validation bundle is eligible for Final Gate only when all required checks name the same candidate SHA/tree or explicitly declare a separate base/head comparison.",
+    "If a workflow checks out a different SHA than the declared candidate, mark SHA_MISMATCH and do not reuse its PASS status.",
+    "Do not rewrite canonical history or silently promote the working candidate to production truth."
+  ],
+  "required_recovery_sequence": [
+    "Inventory corrupted, missing, duplicate-path, renamed, and suspiciously empty files.",
+    "Trace each path through PR diff, parent commits, canonical source repository, and available forensic archives.",
+    "Capture source locator, source commit, exact path, Git blob SHA, SHA-256, target blob SHA, and comparison result.",
+    "Restore only exact, proven source content in a minimal-diff commit.",
+    "Write BLOCKED_SOURCE_UNAVAILABLE to the recovery ledger for every file without verified source evidence.",
+    "Run syntax/encoding checks, path inventory, duplicate-path checks, source hash checks, targeted regression tests, and the full required CI/gate set.",
+    "Re-read the final candidate SHA and each gate's tested SHA; reject mixed-SHA evidence.",
+    "Request Final Gate only after every required check is successful on the declared candidate and no unresolved blocker remains."
+  ],
+  "current_findings": {
+    "inspected_repository": "phakphum12345/Drive-letter",
+    "inspected_candidate_head_sha": "3666dd38655fdd73130cf94e239546aa8a299552",
+    "observed_pr_merge_candidate_sha": "1b7b1de6a706740bc40bad9038773e49f5113ced",
+    "known_blockers": [
+      {
+        "id": "M2-BOM-001",
+        "status": "BLOCKED_SOURCE_UNAVAILABLE",
+        "paths": [
+          "tools/add_parser_regression.py",
+          "tools/add_resource_translator.py",
+          "tools/bootstrap_resource_semantic_platform.py",
+          "tools/create_change_queue.py",
+          "tools/create_resource_identity_allocator.py",
+          "tools/create_resource_instance.py",
+          "tools/create_resource_parser_tests.py",
+          "tools/create_resource_variables.py",
+          "tools/fix_resource_builder.py",
+          "tools/fix_resource_builder_validator.py",
+          "tools/fix_resource_manifest_collision.py",
+          "tools/fix_resource_parser_identity.py",
+          "tools/harden_resource_drift.py",
+          "tools/harden_resource_semantic_platform.py"
+        ],
+        "evidence": "CI Lite run 38624873716 failed on merge candidate 1b7b1de6a706740bc40bad9038773e49f5113ced with U+FEFF syntax failures for all 14 helper paths. Source main tree 95f7da950818b37b1c89cb3b9ae70bbcb9cfa5ab and Generate tree bb4ea0cd65d4e29d23f2015663093ac4357da6ea have no helper basenames; exact-path fetches at canonical commit 565ab068d5a1540ea799b594ff031ba003e068af returned 404. tools/create_change_queue.py candidate blob 5f282702bb03ef11d7184d19c80927b47f919764 contains only BOM bytes.",
+        "action": "Keep all 14 helpers unchanged and BLOCKED_SOURCE_UNAVAILABLE until verified exact-path source is found."
+      },
+      {
+        "id": "M2-SHA-001",
+        "status": "TARGET_AND_TREE_MATCH_CONFIRMED_ON_VERIFICATION_SNAPSHOT",
+        "paths": [
+          ".github/workflows/ci-lite.yml",
+          ".github/workflows/baseline-truth-gate.yml",
+          ".github/workflows/final-gate.yml"
+        ],
+        "evidence": "Unified Final Gate internal M.2 job 116201502776 and CI Lite job 116201502872 both logged TARGET_SHA=CHECKED_OUT_SHA=a226f811eb619b95e893be2fd7a9af10bb5e12d3 and TREE_SHA=892ba3dbe9aa134439507f9f9292be8cbfd150ab. This snapshot's M.2 and CI Lite jobs failed, and decision job 116201840769 failed closed.",
+        "action": "Repeat this exact target/tree binding check for every new PR head; never reuse evidence from a prior merge candidate."
+      },
+      {
+        "id": "M2-PROD-ASSET-001",
+        "status": "RESTORED_FROM_VERIFIED_SOURCE_PENDING_CI",
+        "paths": [
+          "render.yaml",
+          "render.staging.yaml",
+          "scripts/backup-research-os.ps1",
+          "scripts/restore-research-os.ps1"
+        ],
+        "evidence": "Exact source blobs retrieved from phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH@565ab068d5a1540ea799b594ff031ba003e068af. Source blob SHAs: render.yaml=1df582f3078f3e2282fd91de569cc925eab34be2; render.staging.yaml=237879fe0b43ae6f76e4edb2750cf96bb0541e06; scripts/backup-research-os.ps1=e114616bbc0303f3622b42fc1ddf7cf92427e8f8; scripts/restore-research-os.ps1=00e70d2545e45276968a4e7b3bc2a99072eea9ed",
+        "action": "Verify destination blob SHAs equal source blob SHAs, then rerun production-readiness and full CI on the new candidate SHA."
+      },
+      {
+        "id": "M2-BASELINE-001",
+        "status": "PASS_ON_PREVIOUS_CANDIDATE_SHA",
+        "paths": [
+          "current/BASELINE_TRUTH_CONTRACT.json",
+          "tools/verify_baseline_truth.py",
+          ".github/workflows/baseline-truth-gate.yml"
+        ],
+        "evidence": "Baseline Truth run 38624048797 succeeded after fetching refs/heads/main from the declared canonical source. Its actual checkout was merge SHA 5b3a7d026c768ae59cc56878d2d5b61f70946c68 while the PR head was 5cf669b0756d3136e2012c96304d243572e7bdf1; the run is historical and must be repeated on the aligned candidate.",
+        "action": "Use the new merge candidate SHA and verify baseline source fetch and anchor checks again."
+      },
+      {
+        "id": "M2-EXTRA-BOM-001",
+        "status": "REPAIRS_VERIFIED_BY_SOURCE_AUDIT_PENDING_NEXT_SHA",
+        "paths": [
+          ".github/workflows/aeos-master-assurance.yml",
+          ".gitignore",
+          "apps/research_os_flutter/test/desktop_shell_test.dart"
+        ],
+        "evidence": "On target a226f811eb619b95e893be2fd7a9af10bb5e12d3, the M.2 report classifies desktop_shell_test.dart as AUTHORITATIVE_BOM_MATCH and does not report .gitignore or aeos-master-assurance.yml as BOM errors. Only the 14 unavailable helper files remain as blocking byte-integrity findings.",
+        "action": "Re-run after the ledger-only commit and confirm the same 14 helper blockers and no new path/encoding regressions."
+      },
+      {
+        "id": "M2-SOURCE-HELPERS-001",
+        "status": "BLOCKED_SOURCE_UNAVAILABLE",
+        "paths": [
+          "tools/add_parser_regression.py",
+          "tools/add_resource_translator.py",
+          "tools/bootstrap_resource_semantic_platform.py",
+          "tools/create_change_queue.py",
+          "tools/create_resource_identity_allocator.py",
+          "tools/create_resource_instance.py",
+          "tools/create_resource_parser_tests.py",
+          "tools/create_resource_variables.py",
+          "tools/fix_resource_builder.py",
+          "tools/fix_resource_builder_validator.py",
+          "tools/fix_resource_manifest_collision.py",
+          "tools/fix_resource_parser_identity.py",
+          "tools/harden_resource_drift.py",
+          "tools/harden_resource_semantic_platform.py"
+        ],
+        "evidence": "Sampled exact paths were absent at canonical source commit 565ab068d5a1540ea799b594ff031ba003e068af. Path-specific history queries returned no commits for tools/create_change_queue.py, tools/add_parser_regression.py, and tools/add_resource_translator.py. Other paths remain blocked because no exact verified source blobs have been established; tools/create_change_queue.py is BOM-only in the candidate.",
+        "action": "Keep unchanged and blocked until each path has a trusted commit/blob or forensic archive proving exact path and content."
+      },
+      {
+        "id": "M2-GATE-COMPOSITION-001",
+        "status": "FAIL_CLOSED_VERIFIED_ON_PRIOR_SNAPSHOT",
+        "paths": [
+          ".github/workflows/research-os-unified-final-gate.yml",
+          "tools/validate_research_os_unified_final_gate.py"
+        ],
+        "evidence": "Unified Final Gate run 38667067644 decision job 116201840769 failed because required M.2 job 116201502776 and CI Lite job 116201502872 failed; the contract job 116201337857 passed. Both failed jobs bound to the same target SHA a226f811eb619b95e893be2fd7a9af10bb5e12d3 and tree 892ba3dbe9aa134439507f9f9292be8cbfd150ab.",
+        "action": "Revalidate the fail-closed decision on the new ledger commit SHA."
+      }
+    ],
+    "observed_gate_results": {
+      "unified_final_gate_run": {
+        "id": 38667067644,
+        "conclusion": "failure",
+        "tested_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+        "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab",
+        "decision_job_id": 116201840769,
+        "decision_conclusion": "failure"
+      },
+      "ci_lite_job": {
+        "id": 116201502872,
+        "conclusion": "failure",
+        "tested_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+        "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+      },
+      "m2_job": {
+        "id": 116201502776,
+        "conclusion": "failure",
+        "tested_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+        "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab"
+      },
+      "contract_job": {
+        "id": 116201337857,
+        "conclusion": "success",
+        "tested_head_sha": "e41aa1e80ebd6bd00bc669e3553e53ec8bb02b33"
+      }
+    },
+    "snapshot_timestamp_utc": "2026-10-14T19:37:57Z"
+  },
+  "release_rule": "Final Gate must remain blocked while any BLOCKED_SOURCE_UNAVAILABLE, BLOCKED_SHA_RECONCILIATION, source-integrity error, missing required asset, or mixed-SHA validation evidence remains unresolved.",
+  "evidence_binding_note": "current_findings is a pre-enforcement snapshot, not release evidence. Use per-run artifacts and require TARGET_SHA == CHECKED_OUT_SHA plus matching TREE_SHA in every required job.",
+  "gate_enforcement": {
+    "status": "PATCHED_FAIL_CLOSED_PENDING_CI",
+    "workflow": ".github/workflows/research-os-unified-final-gate.yml",
+    "required_jobs": [
+      "m2_audit",
+      "ci_lite",
+      "aeos_recheck",
+      "flutter_surface",
+      "python_surface",
+      "laravel_surface"
+    ],
+    "decision_rule": "The unified release decision fails unless every required job succeeds; m2_audit executes the byte-level M.2 source integrity audit and ci_lite executes API unit tests.",
+    "historical_failure": "Unified Final Gate run 38624873437 reported success while M.2 source integrity run 38624873654 and CI Lite run 38624873716 failed because these were not direct dependencies.",
+    "required_evidence": [
+      "TARGET_SHA",
+      "CHECKED_OUT_SHA",
+      "TREE_SHA",
+      "m2-source-integrity-report.json",
+      "current/M2_SOURCE_RECOVERY_LEDGER.json"
+    ],
+    "verified_snapshot": {
+      "pr_head_sha": "e41aa1e80ebd6bd00bc669e3553e53ec8bb02b33",
+      "target_sha": "a226f811eb619b95e893be2fd7a9af10bb5e12d3",
+      "tree_sha": "892ba3dbe9aa134439507f9f9292be8cbfd150ab",
+      "m2_job_id": 116201502776,
+      "m2_conclusion": "failure",
+      "ci_lite_job_id": 116201502872,
+      "ci_lite_conclusion": "failure",
+      "decision_job_id": 116201840769,
+      "decision_conclusion": "failure",
+      "contract_job_id": 116201337857,
+      "contract_conclusion": "success"
+    },
+    "required_workflows": [
+      ".github/workflows/research-os-unified-final-gate.yml",
+      ".github/workflows/research-os-final-gate.yml",
+      ".github/workflows/final-gate.yml",
+      ".github/workflows/research-os-unified-10x10-gate.yml"
+    ],
+    "additional_historical_false_green": [
+      {
+        "run_id": 38667435123,
+        "workflow": "Research OS Final Gate",
+        "conclusion": "success",
+        "finding": "No M.2 source integrity job; this gate could be green while M.2 audit failed."
+      },
+      {
+        "run_id": 38667434829,
+        "workflow": "V3.5 Master Final Gate",
+        "conclusion": "success",
+        "finding": "No M.2 source integrity job; this gate could be green while M.2 audit failed."
+      },
+      {
+        "run_id": 38667435038,
+        "workflow": "Research OS Unified 10x10 Exact SHA Gate",
+        "conclusion": "success",
+        "finding": "Exact SHA runtime gate did not run M.2 source integrity audit."
+      }
+    ],
+    "required_rule": "Every workflow named as a release/final gate must run the M.2 byte-level source integrity audit on its own exact TARGET_SHA and fail if it fails. Unified Final Gate additionally requires CI Lite. Surface-specific non-release checks may pass, but must not be treated as release approval."
+  },
+  "protocol_standard": {
+    "protocol_id": "M2-SOURCE-INTEGRITY-RECOVERY-001",
+    "version": "1.0.0",
+    "status": "ACTIVE_DIAGNOSTIC_PROTOCOL",
+    "authority": {
+      "m2_role": "diagnostic_only",
+      "final_gate_role": "release_and_merge_authority",
+      "bypass_gates": false,
+      "unknown_provenance_decision": "HOLD"
+    },
+    "required_invariants": [
+      "immutable_source_identity",
+      "single_tested_sha_across_evidence",
+      "path_preserving_inventory",
+      "sha256_and_byte_length_for_each_tracked_file",
+      "detect_nul_bom_empty_truncated_and_invalid_text",
+      "restore_only_from_trusted_source_revision",
+      "ui_api_contract_artifact_version_alignment",
+      "workflow_path_filter_and_checkout_sha_coverage",
+      "fail_closed_on_missing_or_ambiguous_evidence",
+      "rerun_all_applicable_gates_on_recovery_sha"
+    ],
+    "required_evidence_fields": [
+      "source_repository",
+      "source_commit_sha",
+      "target_repository",
+      "target_branch",
+      "tested_commit_sha",
+      "parent_sha",
+      "path_inventory",
+      "sha256_inventory",
+      "missing_paths",
+      "unexpected_paths",
+      "casefold_path_collisions",
+      "duplicate_basename_review",
+      "byte_integrity_findings",
+      "ui_api_artifact_alignment",
+      "workflow_coverage",
+      "restoration_provenance",
+      "gate_results",
+      "decision",
+      "decision_reasons"
+    ],
+    "decision_rules": {
+      "PASS": "All required source, path, content, UI/API/artifact, workflow, and gate evidence is complete and consistent for the exact tested SHA.",
+      "FAIL": "A verified integrity or consistency invariant is violated.",
+      "HOLD": "Required source provenance or evidence is missing, ambiguous, stale, or cannot be independently verified."
+    },
+    "non_goals": [
+      "Do not convert expected authorization denials into success responses.",
+      "Do not disable or weaken failing gates.",
+      "Do not infer a file's identity from basename alone.",
+      "Do not treat a green subset of workflows as overall PASS."
+    ]
+  },
+  "latest_source_history_audit": {
+    "observed_at": "2026-10-19",
+    "status": "NO_AUTHORITATIVE_EXACT_PATH_HISTORY_FOUND",
+    "source_repositories": [
+      "phakphum12345/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH",
+      "phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH"
+    ],
+    "paths_checked": 14,
+    "method": "GitHub path-specific commit-history queries for each known BOM-affected Python helper path in both authoritative repositories",
+    "result": "zero path-history commits returned for all 14 exact paths in both repositories",
+    "interpretation": "No authoritative blob is available at these exact paths in the queried commit histories. This does not prove an equivalent implementation never existed under a different path or repository.",
+    "decision": "HOLD",
+    "prohibited_actions": [
+      "Do not synthesize helper implementations",
+      "Do not treat the in-repository BOM-only replacement as canonical source",
+      "Do not remove or restore files without an independently verified intended-tree decision"
+    ]
+  }
+}

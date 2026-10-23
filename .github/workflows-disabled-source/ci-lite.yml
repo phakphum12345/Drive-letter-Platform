@@ -1,0 +1,99 @@
+name: Research OS CI Lite
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Commit SHA to validate
+        required: false
+        type: string
+      include_flutter:
+        description: Also run Flutter analyze and tests
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-os-ci-lite-${{ inputs.target_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  ci-lite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+      RESEARCH_OS_PROVIDER: mock
+      RESEARCH_OS_SYNC_KEY: ci-lite-test-key
+      RESEARCH_OS_ALLOW_LEGACY_IDENTITY_HEADERS: "1"
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Verify exact checkout SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$TARGET_SHA"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "CHECKED_OUT_SHA=$actual"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation dependency
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Compile API modules
+        run: |
+          python -m compileall -q tools/research_os_api tools/research_curator
+
+      - name: Run API unit tests
+        run: |
+          export RESEARCH_OS_DATA_DIR="$RUNNER_TEMP/ResearchOSData"
+          export RESEARCH_OS_CONVERSATION_STORE="$RUNNER_TEMP/ResearchOSData/sessions/conversations.json"
+          python -m unittest discover -s tools/research_os_api -p "test_*.py" -v
+
+      - name: Run platform assurance regression tests
+        run: |
+          python -m unittest discover -s tools/security -p "test_secret_scanner.py" -v
+          python -m unittest tools.test_external_validation -v
+          python -m unittest tools.test_validate_generate_orchestrator -v
+          python -m unittest tools.test_recon_concurrency -v
+
+      - name: Record Flutter validation scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            echo "FLUTTER_VALIDATION=REQUIRED_PULL_REQUEST" | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [[ "${{ inputs.include_flutter }}" == "true" ]]; then
+            echo "FLUTTER_VALIDATION=REQUESTED_MANUAL_DISPATCH" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "FLUTTER_VALIDATION=SKIPPED_BY_MANUAL_DISPATCH_INPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Set up Flutter
+        if: ${{ github.event_name == 'pull_request' || inputs.include_flutter == true }}
+        uses: ./.github/actions/flutter-setup # vendored composite; nested actions pinned
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter analyze and tests
+        if: ${{ github.event_name == 'pull_request' || inputs.include_flutter == true }}
+        working-directory: apps/research_os_flutter
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
