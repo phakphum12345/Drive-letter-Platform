@@ -1,0 +1,85 @@
+name: Windows Trial Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/research_os_flutter/**"
+      - "packages/research_os_contracts/**"
+      - ".github/workflows/windows-trial-build.yml"
+      - ".github/actions/flutter-setup/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-trial-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Flutter
+        uses: ./.github/actions/flutter-setup
+        with:
+          channel: stable
+          flutter-version: "3.44.4"
+          cache: true
+
+      - name: Enable Windows desktop
+        shell: pwsh
+        run: flutter config --enable-windows-desktop
+
+      - name: Generate Windows runner if absent
+        working-directory: apps/research_os_flutter
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "windows\runner\Runner.rc")) {
+            flutter create --platforms=windows --project-name=research_os_flutter .
+            if ($LASTEXITCODE -ne 0) { throw "Flutter Windows runner generation failed." }
+          }
+
+      - name: Resolve dependencies
+        working-directory: apps/research_os_flutter
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: apps/research_os_flutter
+        run: flutter analyze
+
+      - name: Test
+        working-directory: apps/research_os_flutter
+        run: flutter test
+
+      - name: Build release
+        working-directory: apps/research_os_flutter
+        shell: pwsh
+        run: |
+          flutter build windows --release --dart-define=RESEARCH_OS_API_BASE_URL=http://127.0.0.1:8787
+          if ($LASTEXITCODE -ne 0) { throw "Flutter Windows release build failed." }
+          $exe = "build\windows\x64\runner\Release\research_os_flutter.exe"
+          if (-not (Test-Path $exe)) { throw "Expected Windows executable was not produced." }
+
+      - name: Package Windows application
+        shell: pwsh
+        run: |
+          $source = "apps\research_os_flutter\build\windows\x64\runner\Release"
+          $destination = "Research-OS-Windows-Trial.zip"
+          if (-not (Test-Path "$source\research_os_flutter.exe")) { throw "Executable missing before packaging." }
+          Compress-Archive -Path "$source\*" -DestinationPath $destination -Force
+          if (-not (Test-Path $destination)) { throw "Trial ZIP was not created." }
+
+      - name: Upload trial artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Research-OS-Windows-Trial
+          path: Research-OS-Windows-Trial.zip
+          if-no-files-found: error
+          retention-days: 14
+
