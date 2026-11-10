@@ -1,43 +1,139 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+name: Deploy canonical Research OS Flutter to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact phakphum12345/Drive-letter commit to build (blank uses main)
+        required: false
+        type: string
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
-  group: "pages"
+  group: research-os-pages
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
+  build:
+    name: Build canonical Flutter Web and compatibility UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      API_BASE_URL: https://research-os-api-phakphoum-v0wf.onrender.com
+    steps:
+      - name: Checkout Pages deployment repository
+        uses: actions/checkout@v4
+
+      - name: Checkout canonical Research OS source
+        uses: actions/checkout@v4
+        with:
+          repository: phakphum12345/Drive-letter
+          ref: ${{ inputs.source_sha || 'main' }}
+          path: source
+          token: ${{ github.token }}
+
+      - name: Record exact canonical source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git -C source rev-parse HEAD)"
+          test -n "$source_sha"
+          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+          echo "RESEARCH_OS_SOURCE_SHA=$source_sha"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Verify Pages deployment contract
+        run: python scripts/test_pages_deployment_contract.py
+
+      - name: Analyze and test canonical Flutter application
+        working-directory: source/apps/research_os_flutter
+        run: |
+          flutter create --platforms=web .
+          flutter pub get
+          flutter analyze
+          flutter test --reporter expanded
+
+      - name: Build canonical Flutter Web for GitHub Pages
+        working-directory: source/apps/research_os_flutter
+        run: |
+          flutter build web --release \
+            --base-href "/Drive-letter-Platform/" \
+            --dart-define=RESEARCH_OS_API_BASE_URL="$API_BASE_URL"
+
+      - name: Stage canonical site and preserve legacy UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p site/compatibility/research_os_web
+          cp -R source/apps/research_os_flutter/build/web/. site/
+          cp -R source/apps/research_os_web/. site/compatibility/research_os_web/
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = {
+              "artifact": "research-os-pages",
+              "ui_source": "phakphum12345/Drive-letter/apps/research_os_flutter",
+              "source_sha": os.environ["SOURCE_SHA"],
+              "deployment_repository": "phakphum12345/Drive-letter-Platform",
+              "api_base_url": os.environ["API_BASE_URL"],
+              "compatibility_ui": {
+                  "source": "phakphum12345/Drive-letter/apps/research_os_web",
+                  "published_path": "/compatibility/research_os_web/",
+                  "role": "legacy-compatibility-only"
+              }
+          }
+          Path("site/deployment-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8"
+          )
+          PY
+          test -s site/index.html
+          test -s site/deployment-manifest.json
+          test -s site/compatibility/research_os_web/index.html
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-os-pages-site
+          path: site/**
+          if-no-files-found: error
+          retention-days: 1
+
   deploy:
+    name: Publish verified Flutter Web to GitHub Pages
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: research-os-pages-site
+          path: site
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          path: site
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
